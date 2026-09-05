@@ -152,6 +152,7 @@ function calc() {
   return {
     fed, rows, active, se, wages, seNetIncome, seTax, halfSE, agi, taxable, fedTax,
     states: stateOut, credits, fedWh, stWh, fedPaid, statePaid, countedPayments,
+    w2Missing: w2.filter((s) => s.gross > 0 && !(s.fedWh > 0)).map((s) => s.name),
     gross, totalExp, liab, paid, net: liab - paid, fedNet: fedTax + seTax - fedWh - fedPaid,
   };
 }
@@ -185,6 +186,11 @@ function estimateHtml(c) {
   let paidRows = "";
   paidRows += lrow("Fed withheld", fmt(c.fedWh), "from W2 paychecks, set in SETUP");
   paidRows += lrow("State withheld", fmt(c.stWh), "from W2 paychecks, set in SETUP");
+  if (c.w2Missing && c.w2Missing.length) {
+    paidRows += `<div class="lrow"><span class="k" style="color:var(--warn)">Check withholding</span>
+      <span class="v" style="font-weight:500;color:var(--warn);white-space:normal;text-align:right;font-size:12.5px">
+      ${esc(c.w2Missing.join(", "))} ${c.w2Missing.length === 1 ? "is" : "are"} W2 but no withholding is entered, so the amount owed above is overstated. Enter it in SETUP from a paystub.</span></div>`;
+  }
   for (const p of c.countedPayments) {
     const label = p.kind === "fed" ? "IRS payment" : `${esc(p.kind)} payment`;
     paidRows += lrow(label, p.counted ? fmt(p.amount) : `<span class="sub">${fmt(p.amount)} not counted</span>`,

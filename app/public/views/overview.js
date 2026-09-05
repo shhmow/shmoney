@@ -129,7 +129,25 @@ function thisMonthBody(cf, monthName, st) {
 
 /* Free to spend card body. Null/zero budget -> friendly unlock card, never a
    meaningless negative number. */
-function ftsBody(fts, monthName) {
+function upcomingList(recurring) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const horizon = new Date(today); horizon.setDate(horizon.getDate() + 30);
+  const due = (recurring || [])
+    .filter((r) => r.active !== 0 && r.active !== false && !r.stale && r.next_date)
+    .map((r) => ({ ...r, d: parseDate(r.next_date) }))
+    .filter((r) => r.d >= today && r.d <= horizon)
+    .sort((a, b) => a.d - b.d);
+  if (!due.length) return "";
+  const total = due.reduce((a, r) => a + Math.abs(Number(r.avg_amount) || 0), 0);
+  return `<div class="upcoming">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin:14px 0 4px">
+      <span class="label">Next 30 days</span><span class="sub">${due.length} bill${due.length === 1 ? "" : "s"} ${MID} ${fmtMoneyWhole(total)}</span></div>
+    ${due.slice(0, 4).map((r) => `<div class="upc-row"><span class="sub mono" style="width:52px">${esc(fmtDate(r.next_date))}</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.merchant || r.name || "")}</span><span class="mono">${fmtMoneyWhole(Math.abs(Number(r.avg_amount) || 0))}</span></div>`).join("")}
+    ${due.length > 4 ? `<a class="sub" href="#/recurring" style="text-decoration:none">+${due.length - 4} more &#8594;</a>` : ""}
+  </div>`;
+}
+
+function ftsBody(fts, monthName, recurring) {
   const hasBudget = fts && fts.amount != null && Number(fts.budgetTotal) > 0;
   if (!hasBudget) {
     return `<div class="fts-head"><div class="label">Free to spend ${MID} ${esc(monthName)}</div></div>
@@ -139,7 +157,7 @@ function ftsBody(fts, monthName) {
         actionLabel: "Set up budgets",
         actionHash: "#/budget",
         glyph: "bars",
-      })}`;
+      })}${upcomingList(recurring)}`;
   }
   const daysLeft = Number(fts.daysLeft) || 0;
   const upcoming = Number(fts.upcomingBills) || 0;
@@ -149,21 +167,24 @@ function ftsBody(fts, monthName) {
     </div>
     <div class="hero-num fts-num">${fmtMoneyWhole(fts.amount)}</div>
     <div class="sub" id="fts-sub">after ${fmtMoneyWhole(upcoming)} of upcoming bills</div>
-    <figure class="fts-fig"><svg id="pace-chart" viewBox="0 0 420 130" role="img" aria-label="Cumulative spending this month versus even pace"></svg></figure>`;
+    <figure class="fts-fig"><svg id="pace-chart" viewBox="0 0 420 130" role="img" aria-label="Cumulative spending this month versus even pace"></svg></figure>
+    ${upcomingList(recurring)}`;
 }
 
 export default async function render(main) {
-  let data, cashflow = null, stats = null;
+  let data, cashflow = null, stats = null, recurring = [];
   try {
-    const [ovRes, cfRes, stRes] = await Promise.allSettled([
+    const [ovRes, cfRes, stRes, rcRes] = await Promise.allSettled([
       api.get("/overview"),
       api.get("/cashflow?month=" + currentMonth()),
       api.get("/stats?month=" + currentMonth()),
+      api.get("/recurring"),
     ]);
     if (ovRes.status === "rejected") throw ovRes.reason;
     data = ovRes.value;
     cashflow = cfRes.status === "fulfilled" ? cfRes.value : null;
     stats = stRes.status === "fulfilled" ? stRes.value : null;
+    recurring = rcRes.status === "fulfilled" && Array.isArray(rcRes.value) ? rcRes.value : [];
   } catch (err) {
     main.innerHTML = `<div class="page">${errorCard(err)}</div>`;
     return;
@@ -228,7 +249,7 @@ export default async function render(main) {
 
     <div class="grid two ov-bottom">
       <div class="card">${thisMonthBody(cashflow, monthName, stats)}</div>
-      <div class="card">${ftsBody(fts, monthName)}</div>
+      <div class="card">${ftsBody(fts, monthName, recurring)}</div>
     </div>
 
     <div class="card" style="margin-top:14px">

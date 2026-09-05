@@ -145,6 +145,21 @@ export default async function render(main) {
     <div class="skel" style="height:180px"></div>
   </div>`;
 
+  // Deep link: #/invest?account=<id> sets the account filter once (Overview's
+  // investment cards link here), then the hash is normalised so a reload or
+  // back-navigation does not re-apply it over a filter the user changed.
+  const deep = /^#\/invest\?(.*)$/.exec(location.hash);
+  if (deep) {
+    const acct = new URLSearchParams(deep[1]).get("account");
+    if (acct !== null) {
+      acctFilter = acct;
+      allocSel = null;
+      if (acct) sessionStorage.setItem(ACCT_KEY, acct);
+      else sessionStorage.removeItem(ACCT_KEY);
+    }
+    history.replaceState(history.state, "", "#/invest");
+  }
+
   const qs = acctFilter ? `?account_id=${encodeURIComponent(acctFilter)}` : "";
   // All four in parallel; the frame renders as soon as /investments lands and
   // the market cards fill in when their (possibly Yahoo-slow) calls settle.

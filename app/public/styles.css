@@ -465,3 +465,5 @@ figure svg { display: block; width: 100%; height: auto; }
   .inst { gap: 10px; } .inst .who { min-width: 120px; }
   .inst-acct input { width: 100% !important; }
 }
+.upc-row { display: flex; gap: 10px; align-items: baseline; padding: 4px 0; font-size: 13px; border-bottom: 1px solid var(--line); }
+.upc-row:last-of-type { border-bottom: none; }

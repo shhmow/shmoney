@@ -217,6 +217,7 @@ export function lineChart(svg, seriesList, opts = {}) {
     svg.style.touchAction = "pan-y"; // horizontal drag selects; vertical still scrolls
     const toVBX = (clientX) => {
       const r = svg.getBoundingClientRect();
+      if (!(r.width > 0)) return P.l; // not laid out (hidden tab); never divide by zero
       return Math.max(P.l, Math.min(W - P.r, (clientX - r.left) * W / r.width));
     };
     const tAtX = (x) => tmin + (tmax - tmin) * ((x - P.l) / iw);

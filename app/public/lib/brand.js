@@ -104,8 +104,8 @@ const masked = (s) => !s || /^[\s*#\-_.0-9]*$/.test(s);
 const DESCRIPTOR_RULES = [
   [/^WIRE TYPE:\s*WIRE IN/i, "Wire transfer in"],
   [/^WIRE TYPE:\s*WIRE OUT/i, "Wire transfer out"],
-  [/^Zelle payment to ([^;"]+?)(?: for\b.*)?(?:;|$)/i, (m) => `Zelle to ${m[1].trim()}`],
-  [/^Zelle payment from ([^;"]+?)(?: for\b.*)?(?:;|$)/i, (m) => `Zelle from ${m[1].trim()}`],
+  [/^Zelle payment to ([^;"]+?)(?:\s+for\b.*|\s+Conf#.*|;.*)?$/i, (m) => `Zelle to ${titleCase(m[1].trim())}`],
+  [/^Zelle payment from ([^;"]+?)(?:\s+for\b.*|\s+Conf#.*|;.*)?$/i, (m) => `Zelle from ${titleCase(m[1].trim())}`],
   [/^MOBILE PURCHASE \d{4} (.+?)(?:\s+X{3,}.*)?$/i, (m) => m[1].replace(/\s+[A-Z]{2}$/, "").trim()],
   [/^ONLINE\/MOBILE RECURRING FROM CHK (\d+)/i, (m) => `Autopay from checking ${m[1]}`],
   [/^Online Scheduled Payment to ACCT# (\d+)/i, (m) => `Payment to card ${m[1]}`],
