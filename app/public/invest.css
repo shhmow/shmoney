@@ -1,0 +1,120 @@
+/* Invest tab — layered on top of styles.css tokens (that file is read-only).
+   Everything here is namespaced iv- to stay out of the shared views' way. */
+
+/* ---------- donut segments (rendered by lib/investcharts.js) ---------- */
+.iv-seg { cursor: pointer; transition: opacity .15s ease, stroke-width .15s ease; }
+.iv-seg.dim { opacity: .32; }
+.iv-seg.on { stroke-width: 26; }
+.iv-seg:hover { opacity: 1; }
+.iv-seg:focus-visible { outline: none; filter: brightness(1.25); opacity: 1; }
+
+/* ---------- horizontal bar + benchmark tick (lib/investcharts.js hbar) ---------- */
+.iv-hbar { position: relative; height: 8px; border-radius: 99px; background: var(--raised); flex: 1; min-width: 60px; }
+.iv-hfill { height: 100%; border-radius: 99px; max-width: 100%; }
+.iv-tick { position: absolute; top: -3px; width: 2px; height: 14px; border-radius: 1px;
+           background: var(--ink-2); opacity: .85; transform: translateX(-1px); }
+
+/* ---------- allocation ---------- */
+.iv-alloc { display: flex; align-items: center; gap: 26px; flex-wrap: wrap; }
+.iv-alloc figure { flex-shrink: 0; }
+.iv-legend { display: flex; flex-direction: column; gap: 4px; min-width: 190px; }
+.iv-legend-btn {
+  display: flex; align-items: center; gap: 9px; background: none; border: 1px solid transparent;
+  border-radius: 8px; padding: 5px 9px; cursor: pointer; color: var(--ink-2);
+  font-family: inherit; font-size: 13.5px; text-align: left; width: 100%;
+}
+.iv-legend-btn:hover { background: var(--raised); color: var(--ink); }
+.iv-legend-btn[aria-pressed="true"] { background: var(--raised); border-color: var(--line); color: var(--ink); }
+.iv-legend-btn i { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+.iv-legend-btn .pct { font-family: "IBM Plex Mono", monospace; font-size: 12px; margin-left: auto; color: var(--ink); }
+.iv-legend-btn .val { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.iv-drill { background: var(--raised); border: 1px solid var(--line); border-radius: 10px;
+            padding: 14px 16px; margin-top: 14px; }
+.iv-drill-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+                 flex-wrap: wrap; margin-bottom: 4px; }
+.iv-drill-head .sum { font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.iv-drill-head .sum b { color: var(--ink); }
+.iv-drill table { font-size: 13px; }
+.iv-drill td, .iv-drill th { border-bottom-color: var(--line); }
+.iv-drill .barcell { min-width: 110px; }
+.iv-drill .acctcell { color: var(--muted); font-size: 12px; text-align: right; max-width: 200px; }
+
+/* ---------- sector exposure rows ---------- */
+.iv-sector {
+  display: grid; grid-template-columns: minmax(120px, 168px) 1fr 52px 62px;
+  gap: 10px; align-items: center; padding: 7px 4px; border-radius: 8px;
+  width: 100%; background: none; border: none; color: inherit; font: inherit; text-align: left;
+  cursor: pointer;
+}
+.iv-sector:hover { background: var(--raised); }
+.iv-sector .snm { font-size: 13px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.iv-sector .spct { font-family: "IBM Plex Mono", monospace; font-size: 12px; text-align: right;
+                   color: var(--ink); font-variant-numeric: tabular-nums; }
+.iv-badge { font-family: "IBM Plex Mono", monospace; font-size: 10px; letter-spacing: .04em;
+            padding: 2px 7px; border-radius: 99px; white-space: nowrap; justify-self: end; }
+.iv-badge.over { color: var(--warn); background: rgba(250,178,25,.12); }
+.iv-badge.under { color: var(--c3); background: rgba(74,128,196,.14); }
+.iv-contrib { grid-column: 1 / -1; margin: 2px 0 6px; padding: 8px 12px; background: var(--raised);
+              border: 1px solid var(--line); border-radius: 8px; }
+.iv-contrib .crow { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px;
+                    padding: 3px 0; color: var(--ink-2); }
+.iv-contrib .crow .t { font-weight: 600; color: var(--ink); }
+.iv-contrib .crow .n { color: var(--muted); font-weight: 400; }
+.iv-contrib .crow .v { font-family: "IBM Plex Mono", monospace; font-size: 11.5px;
+                       font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ---------- concentration stat tiles + same-index overlap rows ---------- */
+.iv-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.iv-stat { background: var(--raised); border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px; }
+.iv-stat .lrow { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.iv-stat .dot { width: 7px; height: 7px; border-radius: 99px; display: inline-block; flex-shrink: 0; }
+.iv-stat .dot.ok { background: var(--ok, #1fa168); }
+.iv-stat .dot.warn { background: var(--warn, #fab219); }
+.iv-stat .big { font-size: 22px; font-weight: 800; letter-spacing: -.01em; line-height: 1.15;
+                font-variant-numeric: tabular-nums; }
+.iv-stat .det { font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--muted);
+                margin-top: 2px; letter-spacing: .02em;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.iv-overlap { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 2px;
+              border-top: 1px solid var(--line); font-family: "IBM Plex Mono", monospace;
+              font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.iv-overlap .t { font-weight: 700; color: var(--ink); }
+
+/* ---------- sector pulse ---------- */
+.iv-pulse td, .iv-pulse th { padding: 9px 10px; }
+.iv-pulse tr.hl-over td { background: rgba(250,178,25,.05); }
+.iv-pulse tr.hl-under td { background: rgba(74,128,196,.06); }
+.iv-pulse .you { display: inline-flex; align-items: center; gap: 7px; }
+.iv-pulse .youpct { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--ink-2); }
+.iv-spyline { font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--muted);
+              margin: 8px 2px 0; letter-spacing: .02em; }
+
+/* ---------- table return / placeholder cells ---------- */
+td.na { color: var(--muted); }
+
+/* ---------- analysis card (Claude-written, stored in settings) ---------- */
+.iv-analysis .hl { font-size: 15px; font-weight: 700; letter-spacing: -.01em; margin-bottom: 8px; }
+.iv-analysis ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 5px; }
+.iv-analysis li { font-size: 13.5px; color: var(--ink-2); line-height: 1.5; }
+.iv-analysis li::marker { color: var(--muted); }
+.iv-analysis .by { font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--muted);
+                   margin-top: 10px; letter-spacing: .03em; }
+
+/* ---------- hero chart: you-vs-S&P readout + custom-range chip ---------- */
+.iv-compare { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--ink-2);
+              margin-top: 7px; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+.iv-compare:empty { display: none; }
+.chip .x { margin-left: 6px; color: var(--muted); font-size: 12px; }
+.chip:hover .x { color: var(--ink); }
+#pf-chart { cursor: crosshair; }
+
+/* ---------- shared bits ---------- */
+.iv-err { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+.iv-foot { color: var(--muted); font-size: 12px; margin-top: 12px; line-height: 1.55; }
+.iv-skel { height: 120px; border-radius: 10px; }
+
+@media (max-width: 880px) {
+  .iv-sector { grid-template-columns: minmax(96px, 120px) 1fr 48px 56px; gap: 7px; }
+  .iv-alloc { gap: 18px; }
+  .iv-legend { min-width: 0; flex: 1; }
+}

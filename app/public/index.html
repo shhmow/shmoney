@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>shmoney</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c0e0d">
+  <meta name="description" content="Personal finance dashboard">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="shmoney">
+  <link rel="apple-touch-icon" href="/icon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/invest.css">
+</head>
+<body>
+  <div id="tip" role="presentation"></div>
+
+  <div id="login" class="overlay" hidden>
+    <form id="login-form" class="login-card" autocomplete="on">
+      <div class="wordmark">shmoney<span>.</span></div>
+      <label class="label" for="login-pw">Password</label>
+      <input id="login-pw" name="password" type="password" autocomplete="current-password" required autofocus>
+      <button class="btn primary" type="submit">Sign in</button>
+      <div class="login-err" id="login-err" hidden>Wrong password &#8212; try again.</div>
+    </form>
+  </div>
+
+  <div class="app">
+    <nav class="side" id="nav-side" aria-label="Primary"></nav>
+    <main id="view">
+      <div class="page">
+        <div class="skel" style="height:110px;margin-bottom:14px"></div>
+        <div class="skel" style="height:260px;margin-bottom:14px"></div>
+        <div class="skel" style="height:180px"></div>
+      </div>
+    </main>
+  </div>
+  <nav class="bottom" id="nav-bottom" aria-label="Primary"></nav>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

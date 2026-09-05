@@ -1,0 +1,638 @@
+<title>shmoney</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* shmoney is deliberately dark-first: one committed theme, painted explicitly */
+  :root {
+    --page: #0c0e0d;
+    --card: #15181a;
+    --raised: #1b1f21;
+    --ink: #eef2ef;
+    --ink-2: #9fb0a6;
+    --muted: #69776e;
+    --line: #242a2c;
+    --accent: #3ecf8e;        /* chrome only */
+    --series: #1fa168;        /* validated chart series green */
+    --c1: #1fa168; --c2: #b58a2e; --c3: #4a80c4; --c4: #b4628e;  /* validated categorical (dark #15181a) */
+    --good: #0ca30c; --warn: #fab219; --crit: #d03b3b;
+    --grid: #232927;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--page); color: var(--ink);
+    font-family: "Schibsted Grotesk", -apple-system, "Segoe UI", sans-serif;
+    font-size: 15px; line-height: 1.5;
+  }
+  .mono { font-family: "IBM Plex Mono", monospace; }
+  .app { display: flex; min-height: 100vh; }
+
+  /* ---------- sidebar / nav ---------- */
+  nav.side {
+    width: 208px; flex-shrink: 0; padding: 24px 14px; border-right: 1px solid var(--line);
+    display: flex; flex-direction: column; gap: 4px; position: sticky; top: 0; height: 100vh;
+  }
+  .wordmark { font-weight: 800; font-size: 22px; letter-spacing: -.03em; padding: 0 12px 20px; }
+  .wordmark span { color: var(--accent); }
+  .navbtn {
+    display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px;
+    color: var(--ink-2); font-weight: 500; font-size: 14.5px; cursor: pointer; border: none;
+    background: none; font-family: inherit; text-align: left; width: 100%;
+  }
+  .navbtn svg { width: 17px; height: 17px; flex-shrink: 0; }
+  .navbtn:hover { background: var(--card); color: var(--ink); }
+  .navbtn.active { background: var(--raised); color: var(--ink); }
+  .navbtn.active svg { color: var(--accent); }
+  nav.bottom { display: none; }
+
+  /* ---------- layout ---------- */
+  main { flex: 1; min-width: 0; padding: 28px 32px 96px; }
+  .page { display: none; max-width: 1060px; margin: 0 auto; }
+  .page.active { display: block; }
+  .pagehead { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 8px; }
+  h1 { font-size: 21px; font-weight: 700; letter-spacing: -.01em; margin: 0; }
+  .sub { color: var(--muted); font-size: 13.5px; }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+  .grid { display: grid; gap: 14px; }
+  .grid.two { grid-template-columns: 1fr 1fr; }
+  .grid.acct { grid-template-columns: repeat(3, 1fr); }
+
+  .hero-num { font-size: 38px; font-weight: 800; letter-spacing: -.02em; line-height: 1.1; }
+  .delta { font-size: 13.5px; font-weight: 600; }
+  .delta.up { color: var(--good); } .delta.down { color: var(--crit); }
+  .label { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+
+  .chips { display: flex; gap: 6px; }
+  .chip {
+    font-family: "IBM Plex Mono", monospace; font-size: 11.5px; padding: 4px 10px; border-radius: 99px;
+    border: 1px solid var(--line); color: var(--ink-2); cursor: pointer; background: none;
+  }
+  .chip.active { background: var(--raised); color: var(--ink); border-color: var(--muted); }
+
+  /* accounts */
+  .acct-card { display: flex; flex-direction: column; gap: 2px; }
+  .acct-name { font-size: 13.5px; color: var(--ink-2); font-weight: 500; }
+  .acct-bal { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .acct-bal.neg { color: var(--ink); }
+  .acct-sub { font-size: 12px; color: var(--muted); }
+  .group-title { margin: 22px 0 10px; display: flex; align-items: center; gap: 10px; }
+  .group-title .label { flex-shrink: 0; }
+  .group-title::after { content: ""; height: 1px; background: var(--line); flex: 1; }
+
+  /* transactions */
+  .txn-toggle { display: flex; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 3px; width: fit-content; }
+  .txn-toggle button {
+    border: none; background: none; color: var(--ink-2); font-family: inherit; font-weight: 600;
+    font-size: 13.5px; padding: 6px 16px; border-radius: 8px; cursor: pointer;
+  }
+  .txn-toggle button.active { background: var(--raised); color: var(--ink); }
+  .datehead { margin: 20px 0 6px; }
+  .txn { display: flex; align-items: center; gap: 12px; padding: 11px 4px; border-bottom: 1px solid var(--line); }
+  .txn:last-child { border-bottom: none; }
+  .txn .dot { width: 30px; height: 30px; border-radius: 9px; background: var(--raised); border: 1px solid var(--line);
+              display: grid; place-items: center; flex-shrink: 0;
+              font-family: "IBM Plex Mono", monospace; font-size: 10px; font-weight: 500; letter-spacing: .04em; color: var(--ink-2); }
+  .txn .who { flex: 1; min-width: 0; }
+  .txn .m { font-weight: 600; font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .txn .meta { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); }
+  .catchip { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--ink-2); }
+  .catchip i { width: 7px; height: 7px; border-radius: 99px; display: inline-block; }
+  .amt { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 14.5px; white-space: nowrap; }
+  .amt.in { color: var(--good); }
+  .txn.pending { opacity: .55; } .txn.pending .m::after { content: " \00B7 pending"; font-weight: 400; font-size: 12px; color: var(--muted); }
+
+  /* budget */
+  .brow { padding: 13px 0; border-bottom: 1px solid var(--line); }
+  .brow:last-child { border-bottom: none; }
+  .brow .top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 7px; }
+  .brow .name { font-weight: 600; font-size: 14.5px; display: flex; gap: 8px; align-items: center; }
+  .brow .nums { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--ink-2); }
+  .brow .nums b { color: var(--ink); font-weight: 700; }
+  .track { height: 8px; border-radius: 99px; background: var(--raised); overflow: hidden; }
+  .fill { height: 100%; border-radius: 99px; background: var(--series); }
+  .fill.warn { background: var(--warn); } .fill.over { background: var(--crit); }
+  .bstate { font-size: 12px; margin-top: 5px; font-weight: 600; }
+  .bstate.warn { color: var(--warn); } .bstate.over { color: var(--crit); }
+
+  /* invest */
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+       color: var(--muted); font-weight: 500; text-align: right; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; padding-left: 4px; }
+  td { padding: 10px; text-align: right; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: none; }
+  td .tick { font-weight: 700; } td .nm { color: var(--muted); font-size: 12px; display: block; }
+  .pos { color: var(--good); } .negd { color: var(--crit); }
+  .table-wrap { overflow-x: auto; }
+
+  /* settings */
+  .inst { display: flex; align-items: center; gap: 14px; padding: 14px 4px; border-bottom: 1px solid var(--line); }
+  .inst:last-child { border-bottom: none; }
+  .inst .who { flex: 1; } .inst .who b { font-size: 14.5px; }
+  .inst .who .sub { display: block; }
+  .pill { font-size: 11.5px; font-weight: 600; padding: 3px 10px; border-radius: 99px; display: inline-flex; align-items: center; gap: 6px; }
+  .pill.ok { color: var(--good); background: rgba(12,163,12,.12); }
+  .pill.wait { color: var(--warn); background: rgba(250,178,25,.10); }
+  .btn { background: var(--raised); color: var(--ink); border: 1px solid var(--line); border-radius: 8px;
+         font-family: inherit; font-weight: 600; font-size: 13px; padding: 7px 14px; cursor: pointer; }
+  .btn.primary { background: var(--accent); color: #08110c; border-color: var(--accent); }
+
+  /* charts */
+  figure { margin: 0; }
+  figure svg { display: block; width: 100%; height: auto; }
+  .legend { display: flex; gap: 16px; font-size: 12.5px; color: var(--ink-2); margin-top: 10px; }
+  .legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; margin-right: 6px; vertical-align: -1px; }
+  #tip {
+    position: fixed; pointer-events: none; background: var(--raised); border: 1px solid var(--muted);
+    border-radius: 8px; padding: 7px 11px; font-size: 12.5px; z-index: 50; display: none;
+    box-shadow: 0 6px 24px rgba(0,0,0,.45); white-space: nowrap;
+  }
+  #tip .t-l { color: var(--muted); font-family: "IBM Plex Mono", monospace; font-size: 10.5px; }
+  #tip .t-v { font-weight: 700; font-variant-numeric: tabular-nums; }
+
+  @media (max-width: 880px) {
+    nav.side { display: none; }
+    main { padding: 20px 16px 96px; }
+    .grid.two, .grid.acct { grid-template-columns: 1fr; }
+    nav.bottom {
+      display: flex; position: fixed; bottom: 0; left: 0; right: 0; background: rgba(12,14,13,.92);
+      backdrop-filter: blur(12px); border-top: 1px solid var(--line); padding: 8px 6px calc(10px + env(safe-area-inset-bottom)); z-index: 40;
+    }
+    nav.bottom .navbtn { flex-direction: column; gap: 3px; font-size: 10px; padding: 4px 2px; align-items: center; }
+    .hero-num { font-size: 32px; }
+  }
+</style>
+
+<div id="tip"></div>
+<div class="app">
+<nav class="side" id="nav-side"></nav>
+<main>
+
+<!-- ================= OVERVIEW ================= -->
+<section class="page active" data-page="overview">
+  <div class="pagehead">
+    <div>
+      <div class="label">Net worth</div>
+      <div class="hero-num">$88,304</div>
+      <span class="delta up">&#9650; $2,140 (2.5%)</span> <span class="sub">past month</span>
+    </div>
+    <div class="chips" id="nw-ranges">
+      <button class="chip">1M</button><button class="chip">3M</button>
+      <button class="chip active">1Y</button><button class="chip">All</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <figure>
+      <svg id="nw-chart" viewBox="0 0 900 240" role="img" aria-label="Net worth over the past year, rising from about seventy-four thousand dollars to eighty-eight thousand"></svg>
+    </figure>
+  </div>
+
+  <div class="group-title"><span class="label">Cash</span></div>
+  <div class="grid acct">
+    <div class="card acct-card"><span class="acct-name">BofA Checking</span><span class="acct-bal">$4,215.60</span><span class="acct-sub">&#183;&#183; 4482</span></div>
+  </div>
+
+  <div class="group-title"><span class="label">Credit cards</span></div>
+  <div class="grid acct">
+    <div class="card acct-card"><span class="acct-name">BofA Customized Cash</span><span class="acct-bal neg">&#8722;$482.11</span><span class="acct-sub">statement closes in 12 days</span></div>
+    <div class="card acct-card"><span class="acct-name">Amex Blue Cash</span><span class="acct-bal neg">&#8722;$1,238.40</span><span class="acct-sub">due Sep 8</span></div>
+    <div class="card acct-card"><span class="acct-name">Discover it</span><span class="acct-bal neg">&#8722;$319.72</span><span class="acct-sub">due Sep 14</span></div>
+  </div>
+
+  <div class="group-title"><span class="label">Investments</span></div>
+  <div class="grid acct">
+    <div class="card acct-card"><span class="acct-name">Fidelity Roth IRA</span><span class="acct-bal">$28,441</span><span class="acct-sub delta up">&#9650; 1.1% today</span></div>
+    <div class="card acct-card"><span class="acct-name">Fidelity Brokerage</span><span class="acct-bal">$19,772</span><span class="acct-sub delta up">&#9650; 0.8% today</span></div>
+    <div class="card acct-card"><span class="acct-name">Inherited IRA</span><span class="acct-bal">$37,915</span><span class="acct-sub delta down">&#9660; 0.2% today</span></div>
+  </div>
+
+  <div class="grid two" style="margin-top:22px">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <div class="label">Free to spend &#183; August</div>
+        <span class="sub">6 days left</span>
+      </div>
+      <div class="hero-num" style="font-size:28px;margin:2px 0">$1,118</div>
+      <div class="sub" style="margin-bottom:10px">after $312 of upcoming bills &#183; slightly ahead of pace</div>
+      <figure><svg id="pace-chart" viewBox="0 0 380 110" role="img" aria-label="Cumulative August spending versus ideal pace: 2,646 spent by day 25, slightly above the even-pace line"></svg></figure>
+    </div>
+    <div class="card">
+      <div class="label" style="margin-bottom:6px">Recent activity</div>
+      <div class="txn"><div class="dot">TJ</div><div class="who"><div class="m">Trader Joe's</div><div class="meta"><span class="catchip"><i style="background:var(--c3)"></i>Groceries</span>&#183; Amex</div></div><div class="amt">&#8722;$64.13</div></div>
+      <div class="txn"><div class="dot">SH</div><div class="who"><div class="m">Shell</div><div class="meta"><span class="catchip"><i style="background:var(--c4)"></i>Transport</span>&#183; Discover</div></div><div class="amt">&#8722;$41.20</div></div>
+      <div class="txn"><div class="dot">PA</div><div class="who"><div class="m">Payroll &#8212; ACME Corp</div><div class="meta"><span class="catchip"><i style="background:var(--series)"></i>Income</span>&#183; BofA Checking</div></div><div class="amt in">+$2,620.00</div></div>
+      <div class="txn"><div class="dot">CH</div><div class="who"><div class="m">Chipotle</div><div class="meta"><span class="catchip"><i style="background:var(--c2)"></i>Dining</span>&#183; BofA Card</div></div><div class="amt">&#8722;$13.45</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= TRANSACTIONS ================= -->
+<section class="page" data-page="transactions">
+  <div class="pagehead">
+    <h1>Transactions</h1>
+    <div class="txn-toggle" id="txn-toggle">
+      <button class="active" data-view="all">All accounts</button>
+      <button data-view="byacct">By account</button>
+    </div>
+  </div>
+
+  <div id="acct-picker" class="chips" style="display:none; margin-bottom:16px; flex-wrap:wrap">
+    <button class="chip">BofA Checking</button>
+    <button class="chip">BofA Card</button>
+    <button class="chip active">Amex</button>
+    <button class="chip">Discover</button>
+    <button class="chip">Fidelity &#215;3</button>
+  </div>
+
+  <div class="card" id="txn-list-all">
+    <div class="label datehead">Today &#183; Aug 25</div>
+    <div class="txn pending"><div class="dot">WF</div><div class="who"><div class="m">Whole Foods</div><div class="meta"><span class="catchip"><i style="background:var(--c3)"></i>Groceries</span>&#183; Amex</div></div><div class="amt">&#8722;$38.02</div></div>
+    <div class="txn"><div class="dot">NE</div><div class="who"><div class="m">Netflix</div><div class="meta"><span class="catchip"><i style="background:var(--c1)"></i>Subscriptions</span>&#183; Discover</div></div><div class="amt">&#8722;$15.49</div></div>
+    <div class="label datehead">Yesterday &#183; Aug 24</div>
+    <div class="txn"><div class="dot">CH</div><div class="who"><div class="m">Chipotle</div><div class="meta"><span class="catchip"><i style="background:var(--c2)"></i>Dining</span>&#183; BofA Card</div></div><div class="amt">&#8722;$13.45</div></div>
+    <div class="txn"><div class="dot">SH</div><div class="who"><div class="m">Shell</div><div class="meta"><span class="catchip"><i style="background:var(--c4)"></i>Transport</span>&#183; Discover</div></div><div class="amt">&#8722;$41.20</div></div>
+    <div class="txn"><div class="dot">PA</div><div class="who"><div class="m">Payroll &#8212; ACME Corp</div><div class="meta"><span class="catchip"><i style="background:var(--series)"></i>Income</span>&#183; BofA Checking</div></div><div class="amt in">+$2,620.00</div></div>
+    <div class="label datehead">Aug 22</div>
+    <div class="txn"><div class="dot">TJ</div><div class="who"><div class="m">Trader Joe's</div><div class="meta"><span class="catchip"><i style="background:var(--c3)"></i>Groceries</span>&#183; Amex</div></div><div class="amt">&#8722;$64.13</div></div>
+    <div class="txn"><div class="dot">SP</div><div class="who"><div class="m">Spotify</div><div class="meta"><span class="catchip"><i style="background:var(--c1)"></i>Subscriptions</span>&#183; Amex</div></div><div class="amt">&#8722;$11.99</div></div>
+    <div class="txn"><div class="dot">RP</div><div class="who"><div class="m">Rent &#8212; Parkside Apts</div><div class="meta"><span class="catchip"><i style="background:var(--c2)"></i>Housing</span>&#183; BofA Checking</div></div><div class="amt">&#8722;$1,650.00</div></div>
+    <div class="label datehead">Aug 20</div>
+    <div class="txn"><div class="dot">B4</div><div class="who"><div class="m">Buy 4 &#215; VTI</div><div class="meta"><span class="catchip"><i style="background:var(--c1)"></i>Investing</span>&#183; Fidelity Brokerage</div></div><div class="amt">&#8722;$1,102.36</div></div>
+    <div class="txn"><div class="dot">SO</div><div class="who"><div class="m">Sushi Ota</div><div class="meta"><span class="catchip"><i style="background:var(--c2)"></i>Dining</span>&#183; Amex</div></div><div class="amt">&#8722;$58.90</div></div>
+  </div>
+
+  <div class="card" id="txn-list-byacct" style="display:none">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
+      <div><b style="font-size:15.5px">Amex Blue Cash</b> <span class="sub">&#183;&#183; 1005</span></div>
+      <div class="amt">balance &#8722;$1,238.40</div>
+    </div>
+    <div class="label datehead">Today &#183; Aug 25</div>
+    <div class="txn pending"><div class="dot">WF</div><div class="who"><div class="m">Whole Foods</div><div class="meta"><span class="catchip"><i style="background:var(--c3)"></i>Groceries</span></div></div><div class="amt">&#8722;$38.02</div></div>
+    <div class="label datehead">Aug 22</div>
+    <div class="txn"><div class="dot">TJ</div><div class="who"><div class="m">Trader Joe's</div><div class="meta"><span class="catchip"><i style="background:var(--c3)"></i>Groceries</span></div></div><div class="amt">&#8722;$64.13</div></div>
+    <div class="txn"><div class="dot">SP</div><div class="who"><div class="m">Spotify</div><div class="meta"><span class="catchip"><i style="background:var(--c1)"></i>Subscriptions</span></div></div><div class="amt">&#8722;$11.99</div></div>
+    <div class="label datehead">Aug 20</div>
+    <div class="txn"><div class="dot">SO</div><div class="who"><div class="m">Sushi Ota</div><div class="meta"><span class="catchip"><i style="background:var(--c2)"></i>Dining</span></div></div><div class="amt">&#8722;$58.90</div></div>
+    <div class="label datehead">Aug 17</div>
+    <div class="txn"><div class="dot">UA</div><div class="who"><div class="m">United Airlines</div><div class="meta"><span class="catchip"><i style="background:var(--c4)"></i>Travel</span></div></div><div class="amt">&#8722;$389.60</div></div>
+    <div class="txn"><div class="dot">PT</div><div class="who"><div class="m">Payment &#8212; thank you</div><div class="meta"><span class="catchip"><i style="background:var(--muted)"></i>Payment</span></div></div><div class="amt in">+$900.00</div></div>
+  </div>
+</section>
+
+<!-- ================= CASH FLOW ================= -->
+<section class="page" data-page="cashflow">
+  <div class="pagehead">
+    <h1>Cash flow</h1>
+    <div class="chips"><button class="chip">Jun</button><button class="chip">Jul</button><button class="chip active">Aug</button></div>
+  </div>
+
+  <div class="card">
+    <div class="label" style="margin-bottom:10px">Where August's money went</div>
+    <figure>
+      <svg viewBox="0 0 900 330" role="img" aria-label="Money flow for August: 5,990 dollars of income from paycheck and dividends flows into checking, then out to housing 1,650, investing 1,102, groceries 487, dining 342, transport 219, subscriptions 96, other 264, with 1,830 kept as savings.">
+        <defs>
+          <linearGradient id="rib" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="#1fa168" stop-opacity=".55"/><stop offset="1" stop-color="#1fa168" stop-opacity=".18"/>
+          </linearGradient>
+        </defs>
+        <g font-size="12.5" font-family="Schibsted Grotesk, sans-serif">
+          <!-- left nodes -->
+          <rect x="30" y="60" width="10" height="150" rx="3" fill="#1fa168"/>
+          <text x="48" y="120" fill="#eef2ef" font-weight="600">Paycheck</text>
+          <text x="48" y="137" fill="#69776e" font-family="IBM Plex Mono, monospace" font-size="11">$5,240</text>
+          <rect x="30" y="228" width="10" height="24" rx="3" fill="#1fa168"/>
+          <text x="48" y="240" fill="#eef2ef" font-weight="600">Dividends</text>
+          <text x="48" y="257" fill="#69776e" font-family="IBM Plex Mono, monospace" font-size="11">$750</text>
+          <!-- center node -->
+          <rect x="430" y="55" width="10" height="210" rx="3" fill="#9fb0a6"/>
+          <text x="435" y="42" fill="#eef2ef" font-weight="700" text-anchor="middle">Checking</text>
+          <!-- ribbons in -->
+          <path d="M40,60 C240,60 240,55 430,55 L430,205 C240,205 240,210 40,210 Z" fill="url(#rib)"/>
+          <path d="M40,228 C240,228 240,235 430,235 L430,265 C240,265 240,252 40,252 Z" fill="url(#rib)"/>
+          <!-- ribbons out (grey) -->
+          <g fill="#9fb0a6" fill-opacity=".16">
+            <path d="M440,55 C630,55 630,30 830,30 L830,88 C630,88 630,113 440,113 Z"/>
+            <path d="M440,113 C630,113 630,100 830,100 L830,138 C630,138 630,151 440,151 Z"/>
+            <path d="M440,151 C630,151 630,150 830,150 L830,167 C630,167 630,168 440,168 Z"/>
+            <path d="M440,168 C630,168 630,177 830,177 L830,189 C630,189 630,180 440,180 Z"/>
+            <path d="M440,180 C630,180 630,199 830,199 L830,207 C630,207 630,188 440,188 Z"/>
+            <path d="M440,188 C630,188 630,217 830,217 L830,221 C630,221 630,192 440,192 Z"/>
+            <path d="M440,192 C630,192 630,231 830,231 L830,240 C630,240 630,201 440,201 Z"/>
+          </g>
+          <!-- savings ribbon (green) -->
+          <path d="M440,201 C630,201 630,252 830,252 L830,316 C630,316 630,265 440,265 Z" fill="url(#rib)"/>
+          <!-- right nodes -->
+          <g font-weight="600" fill="#eef2ef">
+            <rect x="830" y="30" width="10" height="58" rx="3" fill="#566360"/><text x="824" y="56" text-anchor="end">Housing</text><text x="824" y="72" text-anchor="end" fill="#69776e" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="400">$1,650</text>
+            <rect x="830" y="100" width="10" height="38" rx="3" fill="#566360"/><text x="824" y="117" text-anchor="end">Investing</text><text x="824" y="133" text-anchor="end" fill="#69776e" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="400">$1,102</text>
+            <rect x="830" y="150" width="10" height="17" rx="3" fill="#566360"/><text x="824" y="162" text-anchor="end">Groceries $487</text>
+            <rect x="830" y="177" width="10" height="12" rx="3" fill="#566360"/><text x="824" y="188" text-anchor="end">Dining $342</text>
+            <rect x="830" y="199" width="10" height="8" rx="3" fill="#566360"/><text x="824" y="208" text-anchor="end">Transport $219</text>
+            <rect x="830" y="217" width="10" height="4" rx="2" fill="#566360"/><text x="824" y="224" text-anchor="end">Subs $96</text>
+            <rect x="830" y="231" width="10" height="9" rx="3" fill="#69776e"/><text x="824" y="241" text-anchor="end">Other $264</text>
+            <rect x="830" y="252" width="10" height="64" rx="3" fill="#1fa168"/><text x="824" y="280" text-anchor="end" fill="#3ecf8e">Saved</text><text x="824" y="296" text-anchor="end" fill="#3ecf8e" font-family="IBM Plex Mono, monospace" font-size="11">$1,830 &#183; 31%</text>
+          </g>
+        </g>
+      </svg>
+      <figcaption class="sub" style="margin-top:8px">Every dollar in, traced to where it went. Green ribbon = kept.</figcaption>
+    </figure>
+  </div>
+
+  <div class="grid two" style="margin-top:14px">
+    <div class="card">
+      <div class="label" style="margin-bottom:10px">Income vs spending &#183; 6 months</div>
+      <figure><svg id="cf-bars" viewBox="0 0 440 200" role="img" aria-label="Monthly income versus spending for March through August; income steady near six thousand, spending between thirty-six hundred and forty-eight hundred"></svg></figure>
+      <div class="legend"><span><i style="background:var(--c1)"></i>Income</span><span><i style="background:var(--c2)"></i>Spending</span></div>
+    </div>
+    <div class="card" style="display:flex;flex-direction:column;justify-content:center;gap:4px">
+      <div class="label">Savings rate &#183; Aug</div>
+      <div class="hero-num" style="color:var(--accent)">31%</div>
+      <div class="sub">3-month average 26% &#183; best month this year</div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= BUDGET ================= -->
+<section class="page" data-page="budget">
+  <div class="pagehead">
+    <div><h1>Budget</h1><span class="sub">5 of 7 on track</span></div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <div class="chips"><button class="chip">Jul</button><button class="chip active">Aug</button></div>
+      <button class="btn">Edit budgets</button>
+    </div>
+  </div>
+  <div class="card" style="padding:10px 16px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:10px">
+    <span class="sub">September&#8217;s budget will be created automatically from your presets on the 1st.</span>
+    <button class="btn" style="font-size:12px;padding:4px 10px">Presets</button>
+  </div>
+  <div class="grid two" style="margin-bottom:14px">
+    <div class="card"><div class="label">Spent of budgeted</div><div class="hero-num" style="font-size:28px">$2,646 <span style="color:var(--muted);font-weight:500;font-size:17px">/ $3,150</span></div></div>
+    <div class="card"><div class="label">Left to spend &#183; 6 days</div><div class="hero-num" style="font-size:28px;color:var(--accent)">$504</div></div>
+  </div>
+  <div class="card">
+    <div class="brow"><div class="top"><span class="name">Groceries</span><span class="nums"><b>$487</b> / $550</span></div><div class="track"><div class="fill warn" style="width:88%"></div></div><div class="bstate warn">&#9679; On pace for ~$604 &#8212; projected $54 over</div></div>
+    <div class="brow"><div class="top"><span class="name">Dining out</span><span class="nums"><b>$342</b> / $300</span></div><div class="track"><div class="fill over" style="width:100%"></div></div>
+      <div class="bstate over">&#9679; Over by $42 &#8212; <a href="#" onclick="return false" style="color:var(--ink-2)">cover from another category</a></div>
+      <div style="background:var(--raised);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-top:9px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <span class="sub">Move</span>
+        <span class="chip" style="background:var(--card)">$42</span>
+        <span class="sub">from</span>
+        <span class="chip active">Shopping &#183; $162 left &#9662;</span>
+        <button class="btn primary" style="font-size:12px;padding:5px 12px">Move</button>
+      </div></div>
+    <div class="brow"><div class="top"><span class="name">Transport</span><span class="nums"><b>$219</b> / $250</span></div><div class="track"><div class="fill warn" style="width:88%"></div></div><div class="bstate warn">&#9679; $31 left &#8212; pace slowing</div></div>
+    <div class="brow" style="background:var(--raised);margin:0 -12px;padding:13px 12px;border-radius:10px;border-bottom:none">
+      <div class="top"><span class="name">Subscriptions <span class="sub" style="font-weight:400">&#8212; editing</span></span>
+        <span style="border:1px solid var(--accent);border-radius:8px;padding:3px 10px;font-variant-numeric:tabular-nums;font-weight:700">$110</span></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+        <button class="chip">Avg 3 months &#183; $104</button>
+        <button class="chip">Last month &#183; $96</button>
+        <button class="chip">Recurring in category &#183; $96</button>
+      </div>
+    </div>
+    <div class="brow"><div class="top"><span class="name">Shopping</span><span class="nums"><b>$188</b> / $350</span></div><div class="track"><div class="fill" style="width:54%"></div></div></div>
+    <div class="brow"><div class="top"><span class="name">Entertainment</span><span class="nums"><b>$74</b> / $150</span></div><div class="track"><div class="fill" style="width:49%"></div></div></div>
+    <div class="brow"><div class="top"><span class="name">Bills & utilities</span><span class="nums"><b>$1,240</b> / $1,440</span></div><div class="track"><div class="fill" style="width:86%"></div></div></div>
+  </div>
+</section>
+
+<!-- ================= INVEST ================= -->
+<section class="page" data-page="invest">
+  <div class="pagehead">
+    <div>
+      <div class="label">Portfolio</div>
+      <div class="hero-num">$86,128</div>
+      <span class="delta up">&#9650; $612 (0.7%)</span> <span class="sub">today</span>
+    </div>
+    <div class="chips"><button class="chip">1M</button><button class="chip active">1Y</button><button class="chip">All</button></div>
+  </div>
+  <div class="card"><figure><svg id="pf-chart" viewBox="0 0 900 200" role="img" aria-label="Portfolio value over the past year, rising from about seventy-one thousand to eighty-six thousand with a dip in April"></svg></figure></div>
+
+  <div class="grid two" style="margin-top:14px">
+    <div class="card">
+      <div class="label" style="margin-bottom:12px">Allocation</div>
+      <div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap">
+        <figure style="flex-shrink:0"><svg id="donut" viewBox="0 0 150 150" style="width:150px" role="img" aria-label="Allocation: US stocks 62 percent, international 18, bonds 12, cash 8"></svg></figure>
+        <div style="display:flex;flex-direction:column;gap:8px;font-size:13.5px">
+          <span><i class="legend" style="background:var(--c1);width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:8px"></i>US stocks <b class="mono" style="font-size:12px">62%</b></span>
+          <span><i style="background:var(--c2);width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:8px"></i>International <b class="mono" style="font-size:12px">18%</b></span>
+          <span><i style="background:var(--c3);width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:8px"></i>Bonds <b class="mono" style="font-size:12px">12%</b></span>
+          <span><i style="background:var(--c4);width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:8px"></i>Cash <b class="mono" style="font-size:12px">8%</b></span>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="label" style="margin-bottom:8px">Accounts</div>
+      <div class="txn"><div class="who"><div class="m">Roth IRA</div><div class="meta">FXAIX &#183; FZILX</div></div><div class="amt">$28,441</div></div>
+      <div class="txn"><div class="who"><div class="m">Brokerage</div><div class="meta">VTI &#183; AAPL &#183; SCHD</div></div><div class="amt">$19,772</div></div>
+      <div class="txn"><div class="who"><div class="m">Inherited IRA</div><div class="meta">FXAIX &#183; FXNAX</div></div><div class="amt">$37,915</div></div>
+    </div>
+  </div>
+
+  <div class="grid two" style="margin-top:14px">
+    <div class="card">
+      <div class="label" style="margin-bottom:10px">Portfolio checks</div>
+      <div class="txn"><div class="who"><div class="m" style="font-size:13.5px">Fee drag</div><div class="meta">blended expense ratio 0.03%</div></div><span class="pill ok">&#9679; Pass</span></div>
+      <div class="txn"><div class="who"><div class="m" style="font-size:13.5px">Single-fund concentration</div><div class="meta">FXAIX is 49% of portfolio</div></div><span class="pill wait">&#9679; Check</span></div>
+      <div class="txn"><div class="who"><div class="m" style="font-size:13.5px">Emergency fund</div><div class="meta">1.2 months of spending in cash &#183; target 3</div></div><span class="pill wait">&#9679; Check</span></div>
+      <div class="txn"><div class="who"><div class="m" style="font-size:13.5px">Allocation drift</div><div class="meta">within 5% of targets</div></div><span class="pill ok">&#9679; Pass</span></div>
+    </div>
+    <div class="card">
+      <div class="label" style="margin-bottom:10px">Retirement</div>
+      <div class="brow" style="border-bottom:1px solid var(--line)">
+        <div class="top"><span class="name" style="font-size:13.5px">Roth IRA &#183; 2026 contributions</span><span class="nums"><b>$4,300</b> / $7,000</span></div>
+        <div class="track"><div class="fill" style="width:61%"></div></div>
+        <div class="sub" style="margin-top:5px">$2,700 of room &#183; 4 months left in the year</div>
+      </div>
+      <div class="brow">
+        <div class="top"><span class="name" style="font-size:13.5px">Inherited IRA &#183; 10-year rule</span><span class="nums"><b>year 1</b> / 10</span></div>
+        <div class="track"><div class="fill" style="width:4%"></div></div>
+        <div class="sub" style="margin-top:5px">Suggested drawdown this year $3,790 &#183; taken $0</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <div class="label" style="margin-bottom:6px">Holdings &#183; aggregated across accounts</div>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Holding</th><th>Shares</th><th>Value</th><th>Day</th><th>Total</th><th>Weight</th></tr></thead>
+      <tbody>
+        <tr><td><span class="tick">FXAIX</span><span class="nm">Fidelity 500 Index &#183; in Roth + Inherited IRA</span></td><td>212.4</td><td>$42,180</td><td class="pos">+0.9%</td><td class="pos">+31.4%</td><td>49%</td></tr>
+        <tr><td><span class="tick">VTI</span><span class="nm">Vanguard Total Market</span></td><td>41.0</td><td>$11,890</td><td class="pos">+0.8%</td><td class="pos">+18.2%</td><td>14%</td></tr>
+        <tr><td><span class="tick">FZILX</span><span class="nm">Fidelity ZERO Intl</span></td><td>608.1</td><td>$8,270</td><td class="negd">&#8722;0.3%</td><td class="pos">+9.1%</td><td>10%</td></tr>
+        <tr><td><span class="tick">FXNAX</span><span class="nm">Fidelity US Bond</span></td><td>702.3</td><td>$7,510</td><td class="pos">+0.1%</td><td class="negd">&#8722;1.2%</td><td>9%</td></tr>
+        <tr><td><span class="tick">AAPL</span><span class="nm">Apple</span></td><td>24.0</td><td>$6,340</td><td class="pos">+1.4%</td><td class="pos">+64.0%</td><td>7%</td></tr>
+        <tr><td><span class="tick">SCHD</span><span class="nm">Schwab US Dividend</span></td><td>118.2</td><td>$3,610</td><td class="pos">+0.5%</td><td class="pos">+7.7%</td><td>4%</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+</section>
+
+<!-- ================= SETTINGS ================= -->
+<section class="page" data-page="settings">
+  <div class="pagehead"><h1>Accounts & settings</h1></div>
+  <div class="card">
+    <div class="label" style="margin-bottom:4px">Linked institutions</div>
+    <div class="inst"><div class="who"><b>Bank of America</b><span class="sub">Checking &#183;&#183; 4482 &#183; Customized Cash &#183;&#183; 3310</span></div><span class="pill ok">&#9679; Connected &#183; synced 6:02 am</span><button class="btn">Relink</button></div>
+    <div class="inst"><div class="who"><b>Fidelity</b><span class="sub">Roth IRA &#183; Brokerage &#183; Inherited IRA</span></div><span class="pill ok">&#9679; Connected &#183; synced 6:02 am</span><button class="btn">Relink</button></div>
+    <div class="inst"><div class="who"><b>American Express</b><span class="sub">Blue Cash &#183;&#183; 1005</span></div><span class="pill wait">&#9676; Waiting on Plaid approval</span><button class="btn" disabled style="opacity:.4">Link</button></div>
+    <div class="inst"><div class="who"><b>Discover</b><span class="sub">it Card &#183;&#183; 0071</span></div><span class="pill wait">&#9676; Waiting on Plaid approval</span><button class="btn" disabled style="opacity:.4">Link</button></div>
+  </div>
+  <div class="grid two" style="margin-top:14px">
+    <div class="card">
+      <div class="label" style="margin-bottom:8px">Data</div>
+      <p class="sub" style="margin:0 0 12px">Import history from a bank CSV export, or download everything shmoney knows.</p>
+      <button class="btn primary">Import CSV</button> <button class="btn">Export all data</button>
+    </div>
+    <div class="card">
+      <div class="label" style="margin-bottom:8px">Categories & rules</div>
+      <p class="sub" style="margin:0 0 12px">28 rules &#183; 96% of transactions auto-categorized. "TRADER JOE'S #552" &#8594; Groceries, and friends.</p>
+      <button class="btn">Manage rules</button>
+    </div>
+  </div>
+</section>
+
+</main>
+</div>
+<nav class="bottom" id="nav-bottom"></nav>
+
+<script>
+// ---------- nav ----------
+const PAGES = [
+  ['overview','Overview','M3 12l9-8 9 8M5 10v9h5v-5h4v5h5v-9'],
+  ['transactions','Activity','M4 6h16M4 12h16M4 18h10'],
+  ['cashflow','Cash flow','M3 17c4 0 4-10 8-10s4 10 8 10M3 7h2M19 17h2'],
+  ['budget','Budget','M4 19V9m5 10V5m5 14v-7m5 7V11'],
+  ['invest','Invest','M3 17l5-5 4 3 6-7 3 3M14 8h4v4'],
+  ['settings','Settings','M12 8a4 4 0 100 8 4 4 0 000-8zm8 4h1M3 12h1m8-9v1m0 16v1m6.4-15.4l-.7.7M5.3 18.7l-.7.7m14.1 0l-.7-.7M5.3 5.3l-.7-.7'],
+];
+function icon(d){return `<svg fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="${d}"/></svg>`;}
+const side = document.getElementById('nav-side'), bottom = document.getElementById('nav-bottom');
+side.innerHTML = `<div class="wordmark">shmoney<span>.</span></div>` +
+  PAGES.map(([id,label,d],i)=>`<button class="navbtn ${i===0?'active':''}" data-nav="${id}">${icon(d)}${label}</button>`).join('');
+bottom.innerHTML = PAGES.slice(0,5).map(([id,label,d],i)=>`<button class="navbtn ${i===0?'active':''}" data-nav="${id}" style="flex:1">${icon(d)}${label}</button>`).join('');
+document.querySelectorAll('[data-nav]').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.dataset.page===b.dataset.nav));
+  document.querySelectorAll('[data-nav]').forEach(x=>x.classList.toggle('active',x.dataset.nav===b.dataset.nav));
+  window.scrollTo({top:0});
+}));
+
+// ---------- transactions toggle ----------
+document.querySelectorAll('#txn-toggle button').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('#txn-toggle button').forEach(x=>x.classList.toggle('active',x===b));
+  const by = b.dataset.view==='byacct';
+  document.getElementById('acct-picker').style.display = by?'flex':'none';
+  document.getElementById('txn-list-all').style.display = by?'none':'block';
+  document.getElementById('txn-list-byacct').style.display = by?'block':'none';
+}));
+
+// ---------- tooltip ----------
+const tip = document.getElementById('tip');
+function showTip(x,y,label,value){ tip.innerHTML=`<div class="t-l">${label}</div><div class="t-v">${value}</div>`; tip.style.display='block';
+  tip.style.left=Math.min(x+14,innerWidth-150)+'px'; tip.style.top=(y-14)+'px'; }
+function hideTip(){ tip.style.display='none'; }
+const fmt = n => '$'+n.toLocaleString();
+
+// ---------- area chart builder (line 2px, dot on hover, hairline grid) ----------
+function areaChart(el, data, labels, color){
+  const svg=document.getElementById(el); if(!svg) return;
+  const [,,W,H]=svg.getAttribute('viewBox').split(' ').map(Number);
+  const P={l:56,r:14,t:14,b:26}, iw=W-P.l-P.r, ih=H-P.t-P.b;
+  const min=Math.min(...data)*0.985, max=Math.max(...data)*1.01;
+  const X=i=>P.l+iw*i/(data.length-1), Y=v=>P.t+ih*(1-(v-min)/(max-min));
+  let g='';
+  for(let t=0;t<=3;t++){ const y=P.t+ih*t/3, v=max-(max-min)*t/3;
+    g+=`<line x1="${P.l}" y1="${y}" x2="${W-P.r}" y2="${y}" stroke="#232927" stroke-width="1"/>
+        <text x="${P.l-8}" y="${y+4}" text-anchor="end" fill="#69776e" font-size="10.5" font-family="IBM Plex Mono, monospace">${Math.round(v/1000)}k</text>`; }
+  labels.forEach((lb,i)=>{ if(i%2===0||i===labels.length-1) g+=`<text x="${X(i)}" y="${H-8}" text-anchor="middle" fill="#69776e" font-size="10.5" font-family="IBM Plex Mono, monospace">${lb}</text>`; });
+  const pts=data.map((v,i)=>`${X(i)},${Y(v)}`).join(' ');
+  const gid=el+'-g';
+  svg.innerHTML=`<defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="${color}" stop-opacity=".28"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
+    ${g}
+    <polygon points="${P.l},${P.t+ih} ${pts} ${W-P.r},${P.t+ih}" fill="url(#${gid})"/>
+    <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>
+    <circle id="${el}-dot" r="4.5" fill="${color}" stroke="#15181a" stroke-width="2" style="display:none"/>
+    <line id="${el}-x" y1="${P.t}" y2="${P.t+ih}" stroke="#69776e" stroke-width="1" stroke-dasharray="3 3" style="display:none"/>`;
+  svg.addEventListener('mousemove',e=>{
+    const r=svg.getBoundingClientRect(), mx=(e.clientX-r.left)*W/r.width;
+    const i=Math.max(0,Math.min(data.length-1,Math.round((mx-P.l)/iw*(data.length-1))));
+    const dot=document.getElementById(el+'-dot'), xl=document.getElementById(el+'-x');
+    dot.style.display='block'; dot.setAttribute('cx',X(i)); dot.setAttribute('cy',Y(data[i]));
+    xl.style.display='block'; xl.setAttribute('x1',X(i)); xl.setAttribute('x2',X(i));
+    showTip(e.clientX,e.clientY,labels[i],fmt(data[i]));
+  });
+  svg.addEventListener('mouseleave',()=>{hideTip();document.getElementById(el+'-dot').style.display='none';document.getElementById(el+'-x').style.display='none';});
+}
+const M=['Sep','Oct','Nov','Dec','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug'];
+areaChart('nw-chart',[74100,74900,76200,77800,78100,79400,80200,79100,82000,84100,86160,88304],M,'#1fa168');
+areaChart('pf-chart',[71200,72400,73900,75600,74800,76900,78100,74600,79800,82400,84900,86128],M,'#1fa168');
+
+// ---------- grouped bars: income vs spending ----------
+(function(){
+  const svg=document.getElementById('cf-bars'); if(!svg) return;
+  const W=440,H=200,P={l:44,r:8,t:12,b:24}, iw=W-P.l-P.r, ih=H-P.t-P.b;
+  const months=['Mar','Apr','May','Jun','Jul','Aug'];
+  const inc=[5990,5990,6240,5990,6120,5990], sp=[4210,4610,3890,4820,4030,3610];
+  const max=7000; const Y=v=>P.t+ih*(1-v/max);
+  let s='<defs><linearGradient id="gi" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1fa168" stop-opacity=".9"/><stop offset="1" stop-color="#1fa168" stop-opacity=".22"/></linearGradient><linearGradient id="gs" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#b58a2e" stop-opacity=".9"/><stop offset="1" stop-color="#b58a2e" stop-opacity=".22"/></linearGradient></defs>';
+  for(let t=0;t<=2;t++){const y=P.t+ih*t/2, v=max*(1-t/2);
+    s+=`<line x1="${P.l}" y1="${y}" x2="${W-P.r}" y2="${y}" stroke="#232927"/>
+        <text x="${P.l-6}" y="${y+4}" text-anchor="end" fill="#69776e" font-size="10" font-family="IBM Plex Mono, monospace">${v/1000}k</text>`;}
+  const gw=iw/months.length, bw=13;
+  months.forEach((m,i)=>{
+    const cx=P.l+gw*i+gw/2;
+    [[inc[i],'url(#gi)',-bw-1,'Income'],[sp[i],'url(#gs)',1,'Spending']].forEach(([v,c,off,name])=>{
+      const y=Y(v), h=P.t+ih-y;
+      s+=`<path d="M${cx+off},${y+4} q0,-4 4,-4 h${bw-8} q4,0 4,4 v${h-4} h-${bw} z" fill="${c}" data-tt="${m} \u00b7 ${name}" data-tv="${fmt(v)}"/>`;
+    });
+    s+=`<text x="${cx}" y="${H-6}" text-anchor="middle" fill="#69776e" font-size="10.5" font-family="IBM Plex Mono, monospace">${m}</text>`;
+  });
+  svg.innerHTML=s;
+  svg.querySelectorAll('[data-tt]').forEach(b=>{
+    b.addEventListener('mousemove',e=>showTip(e.clientX,e.clientY,b.dataset.tt,b.dataset.tv));
+    b.addEventListener('mouseleave',hideTip);
+  });
+})();
+
+// ---------- free-to-spend pace chart ----------
+(function(){
+  const svg=document.getElementById('pace-chart'); if(!svg) return;
+  const W=380,H=110,P={l:8,r:8,t:10,b:18}, iw=W-P.l-P.r, ih=H-P.t-P.b;
+  const budget=3150, days=31, today=25;
+  const actual=[0,95,180,210,395,470,530,610,780,850,905,1120,1180,1240,1460,1520,1580,1700,1890,1960,2020,2140,2380,2450,2560,2646];
+  const X=d=>P.l+iw*d/days, Y=v=>P.t+ih*(1-v/budget);
+  const pts=actual.map((v,i)=>`${X(i)},${Y(v)}`).join(' ');
+  const over = actual[today] > budget*today/days;
+  const col = over ? '#b58a2e' : '#1fa168';
+  svg.innerHTML=`<defs><linearGradient id="pg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="${col}" stop-opacity=".22"/><stop offset="1" stop-color="${col}" stop-opacity="0"/></linearGradient></defs>
+    <line x1="${X(0)}" y1="${Y(0)}" x2="${X(days)}" y2="${Y(budget)}" stroke="#69776e" stroke-width="1.5" stroke-dasharray="4 4"/>
+    <text x="${X(days)-4}" y="${Y(budget)+12}" text-anchor="end" fill="#69776e" font-size="10" font-family="IBM Plex Mono, monospace">even pace to $3,150</text>
+    <polygon points="${X(0)},${Y(0)} ${pts} ${X(today)},${Y(0)}" fill="url(#pg)"/>
+    <polyline points="${pts}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round"/>
+    <circle cx="${X(today)}" cy="${Y(actual[today])}" r="4" fill="${col}" stroke="#15181a" stroke-width="2"/>
+    <text x="${X(today)-8}" y="${Y(actual[today])-8}" text-anchor="end" fill="#eef2ef" font-size="11" font-weight="600" font-family="Schibsted Grotesk, sans-serif">$2,646</text>`;
+})();
+
+// ---------- donut ----------
+(function(){
+  const svg=document.getElementById('donut'); if(!svg) return;
+  const segs=[[62,'#1fa168','US stocks'],[18,'#b58a2e','International'],[12,'#4a80c4','Bonds'],[8,'#b4628e','Cash']];
+  const cx=75,cy=75,r=56,sw=22; let a=-90,s='';
+  segs.forEach(([p,c,n])=>{
+    const a2=a+p*3.6-2.2; // 2px-ish gap
+    const rad=d=>d*Math.PI/180;
+    const x1=cx+r*Math.cos(rad(a)),y1=cy+r*Math.sin(rad(a)),x2=cx+r*Math.cos(rad(a2)),y2=cy+r*Math.sin(rad(a2));
+    s+=`<path d="M${x1},${y1} A${r},${r} 0 ${p>50?1:0} 1 ${x2},${y2}" fill="none" stroke="${c}" stroke-width="${sw}" stroke-linecap="butt" data-tt="${n}" data-tv="${p}%"/>`;
+    a=a2+2.2;
+  });
+  s+=`<text x="${cx}" y="${cy+1}" text-anchor="middle" fill="#eef2ef" font-weight="800" font-size="20" font-family="Schibsted Grotesk, sans-serif">62<tspan font-size="12" fill="#69776e">%</tspan></text>
+      <text x="${cx}" y="${cy+17}" text-anchor="middle" fill="#69776e" font-size="9.5" font-family="IBM Plex Mono, monospace">US EQUITY</text>`;
+  svg.innerHTML=s;
+  svg.querySelectorAll('[data-tt]').forEach(b=>{ b.addEventListener('mousemove',e=>showTip(e.clientX,e.clientY,b.dataset.tt,b.dataset.tv)); b.addEventListener('mouseleave',hideTip); });
+})();
+</script>

@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>shmoney &#183; taxes mock</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
+<style>
+/* ---- tokens + base, copied from app/public/styles.css so the mock reads native ---- */
+:root {
+  --page: #0c0e0d; --card: #15181a; --raised: #1b1f21;
+  --ink: #eef2ef; --ink-2: #9fb0a6; --muted: #69776e; --line: #242a2c;
+  --accent: #3ecf8e; --series: #1fa168;
+  --good: #0ca30c; --warn: #fab219; --crit: #d03b3b;
+}
+* { box-sizing: border-box; }
+html { background: var(--page); color-scheme: dark; }
+body { margin: 0; background: var(--page); color: var(--ink);
+  font-family: "Schibsted Grotesk", -apple-system, "Segoe UI", sans-serif;
+  font-size: 15px; line-height: 1.5; }
+.mono { font-family: "IBM Plex Mono", monospace; }
+.app { display: flex; min-height: 100vh; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+nav.side { width: 208px; flex-shrink: 0; padding: 24px 14px; border-right: 1px solid var(--line);
+  display: flex; flex-direction: column; gap: 4px; position: sticky; top: 0; height: 100vh; }
+.wordmark { font-weight: 800; font-size: 22px; letter-spacing: -.03em; padding: 0 12px 20px; }
+.wordmark span { color: var(--accent); }
+.navbtn { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px;
+  color: var(--ink-2); font-weight: 500; font-size: 14.5px; cursor: pointer; border: none;
+  background: none; font-family: inherit; text-align: left; width: 100%; }
+.navbtn svg { width: 17px; height: 17px; flex-shrink: 0; }
+.navbtn:hover { background: var(--card); color: var(--ink); }
+.navbtn.active { background: var(--raised); color: var(--ink); }
+.navbtn.active svg { color: var(--accent); }
+
+main { flex: 1; min-width: 0; padding: 28px 32px 96px; }
+.page { max-width: 1060px; margin: 0 auto; }
+.pagehead { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 8px; }
+h1 { font-size: 21px; font-weight: 700; letter-spacing: -.01em; margin: 0; }
+h2 { font-size: 16px; font-weight: 700; margin: 0 0 6px; }
+.sub { color: var(--muted); font-size: 13.5px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+.grid { display: grid; gap: 14px; }
+.grid.two { grid-template-columns: 1fr 1fr; }
+.grid.two > * { min-width: 0; }
+.hero-num { font-size: 38px; font-weight: 800; letter-spacing: -.02em; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.label { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; padding: 4px 10px; border-radius: 99px;
+  border: 1px solid var(--line); color: var(--ink-2); cursor: pointer; background: none; }
+.chip.active { background: var(--raised); color: var(--ink); border-color: var(--muted); }
+.pill { font-size: 11.5px; font-weight: 600; padding: 3px 10px; border-radius: 99px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.pill.ok { color: var(--good); background: rgba(12,163,12,.12); }
+.pill.wait { color: var(--warn); background: rgba(250,178,25,.10); }
+.pill.err { color: var(--crit); background: rgba(208,59,59,.12); }
+.pill.dim { color: var(--ink-2); background: var(--raised); }
+
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--muted); font-weight: 500; text-align: right; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+th:first-child, td:first-child { text-align: left; padding-left: 4px; }
+td { padding: 10px; text-align: right; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+tr:last-child td { border-bottom: none; }
+.pos { color: var(--good); } .negd { color: var(--crit); }
+.table-wrap { overflow-x: auto; }
+
+input, select { background: var(--raised); border: 1px solid var(--line); color: var(--ink); border-radius: 8px;
+  padding: 8px 10px; font-family: inherit; font-size: 13.5px; transition: border-color .12s; }
+input:hover, select:hover { border-color: var(--muted); }
+input:focus-visible, select:focus-visible { outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(62, 207, 142, .16); }
+select { -webkit-appearance: none; appearance: none; cursor: pointer;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5l3.5 3.5 3.5-3.5' fill='none' stroke='%239fb0a6' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center; background-size: 12px; padding-right: 30px; }
+select option { background: var(--raised); color: var(--ink); }
+input[type="number"] { font-variant-numeric: tabular-nums; -moz-appearance: textfield; appearance: textfield; width: 96px; text-align: right; }
+input[type="number"]::-webkit-inner-spin-button, input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.muted-note { color: var(--muted); font-size: 12.5px; }
+.banner { padding: 10px 16px; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* ---- taxes mock specific ---- */
+.tax-banner { border-color: rgba(250,178,25,.35); }
+.tax-banner .label { color: var(--warn); }
+.tabrow { margin: 4px 0 16px; }
+.lrow { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.lrow:last-child { border-bottom: none; }
+.lrow .k { font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-2); }
+.lrow .k .nm { display: block; letter-spacing: 0; text-transform: none; font-family: "Schibsted Grotesk", sans-serif; font-size: 12px; color: var(--muted); }
+.lrow .v { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 14px; white-space: nowrap; }
+.lrow.total { border-top: 1px solid var(--line); margin-top: 2px; }
+.lrow.total .k { color: var(--ink); }
+.lrow.total .v { font-weight: 800; font-size: 15px; }
+.hero-card { display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-wrap: wrap; margin-bottom: 14px; }
+.hero-card .big { display: flex; flex-direction: column; gap: 2px; }
+.hero-card .split { display: flex; gap: 26px; flex-wrap: wrap; }
+.hero-card .split .cell { display: flex; flex-direction: column; gap: 2px; }
+.hero-card .cell .n { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.owed { color: var(--warn); } .refund { color: var(--good); }
+.src-row { display: grid; grid-template-columns: minmax(150px, 1.3fr) auto 1fr 1fr auto auto; gap: 12px; align-items: end;
+  padding: 14px 0; border-bottom: 1px solid var(--line); }
+.src-row:last-child { border-bottom: none; }
+.src-row .who .m { font-weight: 600; font-size: 14.5px; }
+.src-row .who .sub { display: block; }
+.src-row .gross { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 15px; align-self: end; padding-bottom: 8px; }
+.setup-top { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+.setup-top .field { flex: 0 0 auto; }
+.assume { margin-top: 14px; }
+.assume .lrow .v { font-weight: 500; font-size: 13px; color: var(--ink-2); }
+.qq { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 14px; }
+.qq .card { display: flex; flex-direction: column; gap: 6px; }
+.qq .qn { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.qq .qsub { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+@media (max-width: 1000px) { .qq { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 880px) {
+  nav.side { display: none; }
+  main { padding: 20px 16px 96px; }
+  .grid.two { grid-template-columns: 1fr; }
+  .hero-num { font-size: 32px; }
+  .src-row { grid-template-columns: 1fr 1fr; align-items: start; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="side" aria-label="Primary">
+    <div class="wordmark">shmoney<span>.</span></div>
+    <button type="button" class="navbtn"><svg fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12l9-8 9 8M5 10v9h5v-5h4v5h5v-9"/></svg>Overview</button>
+    <button type="button" class="navbtn"><svg fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Activity</button>
+    <button type="button" class="navbtn"><svg fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17c4 0 4-10 8-10s4 10 8 10M3 7h2M19 17h2"/></svg>Cash flow</button>
+    <button type="button" class="navbtn"><svg fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9m5 10V5m5 14v-7m5 7V11"/></svg>Budget</button>
+    <button type="button" class="navbtn"><svg fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17l5-5 4 3 6-7 3 3M14 8h4v4"/></svg>Invest</button>
+    <button type="button" class="navbtn active"><svg fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 5L5 19M7.2 4.2a2.6 2.6 0 100 5.2 2.6 2.6 0 000-5.2zM16.8 14.6a2.6 2.6 0 100 5.2 2.6 2.6 0 000-5.2z"/></svg>Taxes</button>
+    <button type="button" class="navbtn"><svg fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 11-2.3-5.6M20 3v4h-4"/></svg>Recurring</button>
+    <button type="button" class="navbtn"><svg fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8a4 4 0 100 8 4 4 0 000-8zm8 4h1M3 12h1m8-9v1m0 16v1m6.4-15.4l-.7.7M5.3 18.7l-.7.7m14.1 0l-.7-.7M5.3 5.3l-.7-.7"/></svg>Settings</button>
+  </nav>
+
+  <main>
+    <div class="page">
+      <div class="pagehead">
+        <div>
+          <h1>Taxes</h1>
+          <div class="sub">2026 tax year &#183; year to date through Aug 26</div>
+        </div>
+        <span class="pill dim mono" id="hdr-net"></span>
+      </div>
+
+      <div class="card banner tax-banner">
+        <div>
+          <span class="label">Planning estimate only</span>
+          <div class="muted-note">Rough math from category totals and your inputs. Not tax advice, not a filing tool. Verify with a preparer.</div>
+        </div>
+      </div>
+
+      <div class="chips tabrow" role="tablist" id="tabs">
+        <button class="chip active" data-tab="estimate" role="tab">ESTIMATE</button>
+        <button class="chip" data-tab="quarterly" role="tab">QUARTERLY</button>
+        <button class="chip" data-tab="sources" role="tab">SOURCES</button>
+        <button class="chip" data-tab="setup" role="tab">SETUP</button>
+      </div>
+
+      <!-- ============ ESTIMATE ============ -->
+      <section id="view-estimate">
+        <div class="card hero-card">
+          <div class="big">
+            <span class="label" id="net-label">Still owed</span>
+            <div class="hero-num" id="net-num"></div>
+            <div class="sub" id="net-sub"></div>
+          </div>
+          <div class="split">
+            <div class="cell"><span class="label">Total tax</span><span class="n" id="hero-liab"></span></div>
+            <div class="cell"><span class="label">Paid so far</span><span class="n" id="hero-paid"></span></div>
+            <div class="cell"><span class="label">Effective rate</span><span class="n" id="hero-eff"></span></div>
+          </div>
+        </div>
+
+        <div class="grid two">
+          <div class="card">
+            <span class="label">2026 estimated tax</span>
+            <div id="liab-rows"></div>
+          </div>
+          <div class="card">
+            <span class="label">Paid so far</span>
+            <div id="paid-rows"></div>
+          </div>
+        </div>
+
+        <div class="card assume">
+          <span class="label">Assumptions</span>
+          <div class="lrow"><span class="k">Federal</span><span class="v" id="as-fed"></span></div>
+          <div class="lrow"><span class="k">Self employment</span><span class="v">15.3% on 92.35% of untaxed income, half deductible</span></div>
+          <div class="lrow"><span class="k">States</span><span class="v" id="as-states"></span></div>
+          <div class="lrow"><span class="k">Apportionment</span><span class="v">Each source taxed by its work state. Resident state credit for tax paid elsewhere not modeled.</span></div>
+          <div class="lrow"><span class="k">Income</span><span class="v">YTD totals treated as full year. No business expenses deducted from untaxed income.</span></div>
+        </div>
+      </section>
+
+      <!-- ============ QUARTERLY ============ -->
+      <section id="view-quarterly" hidden>
+        <div class="qq" id="q-cards"></div>
+        <div class="card">
+          <span class="label">Estimated payment schedule</span>
+          <div class="table-wrap">
+            <table id="q-table">
+              <thead><tr><th>Deadline</th><th>Covers</th><th>Suggested</th><th>Paid</th><th>Status</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div class="muted-note" style="margin-top:10px">W2 withholding counts as paid evenly across the year. Suggested amounts spread the remaining balance over the quarters left.</div>
+        </div>
+      </section>
+
+      <!-- ============ SOURCES ============ -->
+      <section id="view-sources" hidden>
+        <div class="card">
+          <span class="label">Per source</span>
+          <div class="table-wrap">
+            <table id="src-table">
+              <thead><tr><th>Source</th><th>Treatment</th><th>State</th><th>Gross</th><th>Est tax</th><th>Eff rate</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div class="muted-note" style="margin-top:10px">Federal, self employment and state tax allocated to each source in proportion to its income.</div>
+        </div>
+      </section>
+
+      <!-- ============ SETUP ============ -->
+      <section id="view-setup" hidden>
+        <div class="card" style="margin-bottom:14px">
+          <span class="label">Profile</span>
+          <div class="setup-top" style="margin-top:10px">
+            <div class="field">
+              <span class="label">Filing status</span>
+              <select id="set-filing">
+                <option value="single">Single</option>
+                <option value="mfj">Married joint</option>
+              </select>
+            </div>
+            <div class="field">
+              <span class="label">Resident state</span>
+              <select id="set-res"></select>
+            </div>
+          </div>
+          <div class="muted-note">If your parents claim you as a dependent your standard deduction can change. Flag for later.</div>
+        </div>
+
+        <div class="card">
+          <span class="label">Income sources</span>
+          <div id="src-setup"></div>
+          <div class="muted-note" style="margin-top:10px">Gross comes from category totals, read only here. Withheld amounts are estimates from paychecks, edit to match your paystubs.</div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<script>
+"use strict";
+/* ---------------- data (mock, mirrors real categories) ---------------- */
+var STATES = {
+  CA: { name: "California", type: "brackets", sd: 5706, ex: 0,
+        brackets: [[10906,.01],[25842,.02],[40784,.04],[56612,.06],[71528,.08],[Infinity,.093]],
+        note: "simplified brackets" },
+  IN: { name: "Indiana", type: "flat", rate: .0295, ex: 1000, note: "2.95% flat, county tax not included" },
+  MA: { name: "Massachusetts", type: "flat", rate: .05, ex: 4400, note: "5% flat" },
+  TX: { name: "Texas", type: "none", note: "no income tax" },
+  FL: { name: "Florida", type: "none", note: "no income tax" },
+  WA: { name: "Washington", type: "none", note: "no income tax" }
+};
+var FED = {
+  single: { sd: 16100, brackets: [[12400,.10],[50400,.12],[105700,.22],[201775,.24],[256225,.32],[640600,.35],[Infinity,.37]] },
+  mfj:    { sd: 32200, brackets: [[24800,.10],[100800,.12],[211400,.22],[403550,.24],[512450,.32],[640600,.35],[Infinity,.37]] }
+};
+var sources = [
+  { id: "spacex", name: "SpaceX",          sub: "W2 internship",     gross: 18276, treat: "w2",  state: "CA", fedWh: 1830, stWh: 260 },
+  { id: "paypal", name: "PayPal",          sub: "untaxed deposits",  gross: 16100, treat: "se",  state: "MA", fedWh: 0,    stWh: 0 },
+  { id: "btb",    name: "Bully The Board", sub: "Zelle contract",    gross: 2300,  treat: "se",  state: "IN", fedWh: 0,    stWh: 0 },
+  { id: "purdue", name: "Purdue",          sub: "W2 part time",      gross: 793,   treat: "w2",  state: "IN", fedWh: 48,   stWh: 12 }
+];
+var settings = { filing: "single", res: "MA" };
+var payments = [
+  { to: "IRS",    kind: "fed", amt: 3615, date: "May 8" },
+  { to: "MA DOR", kind: "MA",  amt: 1026, date: "Apr 29" }
+];
+var TREATS = { w2: "W2 withheld", se: "1099 self emp", none: "Not taxable" };
+
+/* ---------------- calc ---------------- */
+function progressive(taxable, brackets) {
+  var tax = 0, lo = 0;
+  for (var i = 0; i < brackets.length; i++) {
+    var hi = brackets[i][0], rate = brackets[i][1];
+    if (taxable > lo) tax += (Math.min(taxable, hi) - lo) * rate;
+    lo = hi;
+  }
+  return tax;
+}
+function calc() {
+  var fed = FED[settings.filing];
+  var active = sources.filter(function (s) { return s.treat !== "none"; });
+  var w2 = active.filter(function (s) { return s.treat === "w2"; });
+  var se = active.filter(function (s) { return s.treat === "se"; });
+  var wages = w2.reduce(function (a, s) { return a + s.gross; }, 0);
+  var seGross = se.reduce(function (a, s) { return a + s.gross; }, 0);
+  var seNet = seGross * .9235;
+  var seTax = seNet * .153;
+  var halfSE = seTax / 2;
+  var agi = wages + seGross - halfSE;
+  var taxable = Math.max(0, agi - fed.sd);
+  var fedTax = progressive(taxable, fed.brackets);
+
+  // states: group active sources by work state
+  var stateCalc = {};
+  active.forEach(function (s) {
+    var st = STATES[s.state];
+    if (!st || st.type === "none") return;
+    if (!stateCalc[s.state]) stateCalc[s.state] = { base: 0, tax: 0, wh: 0, paid: 0 };
+    var base = s.gross;
+    if (s.treat === "se" && seGross > 0) base -= halfSE * (s.gross / seGross);
+    stateCalc[s.state].base += base;
+  });
+  Object.keys(stateCalc).forEach(function (code) {
+    var st = STATES[code], sc = stateCalc[code];
+    var t = Math.max(0, sc.base - (st.sd || 0) - (st.ex || 0));
+    sc.tax = st.type === "flat" ? t * st.rate : progressive(t, st.brackets);
+  });
+  active.forEach(function (s) {
+    if (stateCalc[s.state]) stateCalc[s.state].wh += s.stWh || 0;
+  });
+  payments.forEach(function (p) {
+    if (p.kind !== "fed" && stateCalc[p.kind]) stateCalc[p.kind].paid += p.amt;
+  });
+
+  var fedWh = active.reduce(function (a, s) { return a + (s.fedWh || 0); }, 0);
+  var fedPaid = payments.filter(function (p) { return p.kind === "fed"; })
+                        .reduce(function (a, p) { return a + p.amt; }, 0);
+  var stateTaxTotal = 0, stateWh = 0;
+  Object.keys(stateCalc).forEach(function (c) {
+    stateTaxTotal += stateCalc[c].tax; stateWh += stateCalc[c].wh;
+  });
+  var statePaid = payments.filter(function (p) { return p.kind !== "fed"; })
+                          .reduce(function (a, p) { return a + p.amt; }, 0);
+  var gross = active.reduce(function (a, s) { return a + s.gross; }, 0);
+  var liab = fedTax + seTax + stateTaxTotal;
+  var paid = fedWh + fedPaid + stateWh + statePaid;
+  return {
+    fed: fed, wages: wages, seGross: seGross, seTax: seTax, halfSE: halfSE,
+    agi: agi, taxable: taxable, fedTax: fedTax, states: stateCalc,
+    fedWh: fedWh, fedPaid: fedPaid, stateWh: stateWh, statePaid: statePaid,
+    gross: gross, liab: liab, paid: paid, net: liab - paid,
+    fedNet: fedTax + seTax - fedWh - fedPaid, active: active, se: se
+  };
+}
+
+/* ---------------- format ---------------- */
+function fmt(n) {
+  var r = Math.round(Math.abs(n));
+  var s = "$" + r.toLocaleString("en-US");
+  return n < -0.5 ? "(" + s + ")" : s;
+}
+function pct(n) { return (n * 100).toFixed(1) + "%"; }
+
+/* ---------------- render ---------------- */
+function lrow(k, v, sub, cls) {
+  return '<div class="lrow' + (cls ? " " + cls : "") + '"><span class="k">' + k +
+         (sub ? '<span class="nm">' + sub + "</span>" : "") +
+         '</span><span class="v">' + v + "</span></div>";
+}
+
+function render() {
+  var c = calc();
+
+  /* hero */
+  var owes = c.net > 0.5;
+  document.getElementById("net-label").textContent = owes ? "Estimated still owed" : "Estimated refund";
+  var num = document.getElementById("net-num");
+  num.textContent = fmt(Math.abs(c.net));
+  num.className = "hero-num " + (owes ? "owed" : "refund");
+  var stNet = c.net - c.fedNet;
+  document.getElementById("net-sub").innerHTML =
+    "federal " + fmt(c.fedNet) + " &#183; states " + fmt(stNet);
+  document.getElementById("hero-liab").textContent = fmt(c.liab);
+  document.getElementById("hero-paid").textContent = fmt(c.paid);
+  document.getElementById("hero-eff").textContent = c.gross ? pct(c.liab / c.gross) : "0%";
+  document.getElementById("hdr-net").textContent =
+    (owes ? "OWES " : "REFUND ") + fmt(Math.abs(c.net));
+
+  /* liability card */
+  var h = "";
+  h += lrow("Federal income", fmt(c.fedTax), "taxable " + fmt(c.taxable) + " after " + fmt(c.fed.sd) + " standard deduction");
+  h += lrow("Self employment", fmt(c.seTax), "15.3% on 92.35% of " + fmt(c.seGross));
+  Object.keys(c.states).forEach(function (code) {
+    h += lrow(STATES[code].name, fmt(c.states[code].tax), STATES[code].note);
+  });
+  h += lrow("Total", fmt(c.liab), "", "total");
+  document.getElementById("liab-rows").innerHTML = h;
+
+  /* paid card */
+  var p = "";
+  p += lrow("Fed withheld", fmt(c.fedWh), "from W2 paychecks");
+  payments.forEach(function (pay) {
+    p += lrow(pay.to + " payment", fmt(pay.amt), pay.date + " 2026, from Taxes category");
+  });
+  p += lrow("State withheld", fmt(c.stateWh), "from W2 paychecks");
+  p += lrow("Total paid", fmt(c.paid), "", "total");
+  p += lrow(owes ? "Still owed" : "Refund",
+            '<span class="' + (owes ? "negd" : "pos") + '">' + fmt(Math.abs(c.net)) + "</span>", "", "total");
+  document.getElementById("paid-rows").innerHTML = p;
+
+  /* assumptions */
+  var fb = c.fed.brackets;
+  document.getElementById("as-fed").textContent =
+    "2026 " + (settings.filing === "mfj" ? "married joint" : "single") + " brackets, 10% to " +
+    fmt(fb[0][0]) + ", 12% to " + fmt(fb[1][0]) + ", 22% above. Standard deduction " + fmt(c.fed.sd) + ".";
+  var stTxt = Object.keys(c.states).map(function (code) {
+    return STATES[code].name + " " + STATES[code].note;
+  }).join(". ");
+  document.getElementById("as-states").textContent = stTxt || "No state tax for assigned states.";
+
+  renderQuarterly(c);
+  renderSources(c);
+  renderSetup();
+}
+
+function renderQuarterly(c) {
+  var estNeed = Math.max(0, c.liab - c.fedWh - c.stateWh);  // what withholding does not cover
+  var perQ = estNeed / 4;
+  var estPaid = c.fedPaid + c.statePaid;
+  var remaining = Math.max(0, estNeed - estPaid);
+  var qs = [
+    { q: "Q1", due: "Apr 15", covers: "Jan to Mar", paid: 0,       past: true },
+    { q: "Q2", due: "Jun 15", covers: "Apr to May", paid: estPaid, past: true },
+    { q: "Q3", due: "Sep 15", covers: "Jun to Aug", paid: 0,       past: false },
+    { q: "Q4", due: "Jan 15", covers: "Sep to Dec", paid: 0,       past: false }
+  ];
+  var remQ = qs.filter(function (q) { return !q.past; }).length;
+  qs.forEach(function (q) { q.suggested = q.past ? perQ : remaining / remQ; });
+
+  var cards = "";
+  qs.forEach(function (q) {
+    var pill, cls;
+    if (q.past && q.paid > 0) { pill = "PAID"; cls = "ok"; }
+    else if (q.past) { pill = "SKIPPED"; cls = "err"; }
+    else if (q.q === "Q3") { pill = "DUE SEP 15"; cls = "wait"; }
+    else { pill = "UPCOMING"; cls = "dim"; }
+    cards += '<div class="card"><span class="label">' + q.q + " &#183; " + q.due + "</span>" +
+      '<div class="qn">' + fmt(q.past ? q.paid : q.suggested) + "</div>" +
+      '<div class="qsub">' + (q.past ? "paid &#183; suggested was " + fmt(q.suggested) : "suggested") + "</div>" +
+      '<div><span class="pill ' + cls + '">' + pill + "</span></div></div>";
+  });
+  document.getElementById("q-cards").innerHTML = cards;
+
+  var rows = "";
+  qs.forEach(function (q) {
+    var pill, cls;
+    if (q.past && q.paid > 0) { pill = "PAID LATE"; cls = "ok"; }
+    else if (q.past) { pill = "MISSED"; cls = "err"; }
+    else if (q.q === "Q3") { pill = "NEXT"; cls = "wait"; }
+    else { pill = "UPCOMING"; cls = "dim"; }
+    rows += "<tr><td>" + q.due + (q.q === "Q4" ? " 2027" : " 2026") + "</td><td>" + q.covers +
+      "</td><td>" + fmt(q.suggested) + "</td><td>" + (q.paid ? fmt(q.paid) : "$0") +
+      '</td><td><span class="pill ' + cls + '">' + pill + "</span></td></tr>";
+  });
+  document.querySelector("#q-table tbody").innerHTML = rows;
+}
+
+function renderSources(c) {
+  var seGross = c.seGross || 1;
+  var taxedGross = c.active.reduce(function (a, s) { return a + s.gross; }, 0) || 1;
+  var rows = "";
+  sources.forEach(function (s) {
+    var alloc = 0;
+    if (s.treat !== "none") {
+      alloc += c.fedTax * (s.gross / taxedGross);
+      if (s.treat === "se") alloc += c.seTax * (s.gross / seGross);
+      var sc = c.states[s.state];
+      if (sc && sc.base > 0) {
+        var stateGross = c.active.filter(function (x) { return x.state === s.state; })
+                                 .reduce(function (a, x) { return a + x.gross; }, 0);
+        alloc += sc.tax * (s.gross / stateGross);
+      }
+    }
+    var eff = s.gross ? alloc / s.gross : 0;
+    rows += "<tr><td><b>" + s.name + "</b></td><td>" + TREATS[s.treat] + "</td><td>" + s.state +
+      "</td><td>" + fmt(s.gross) + "</td><td>" + fmt(alloc) + "</td><td>" +
+      (s.treat === "none" ? "0%" : pct(eff)) + "</td></tr>";
+  });
+  var totAlloc = c.fedTax + c.seTax + Object.keys(c.states).reduce(function (a, k) { return a + c.states[k].tax; }, 0);
+  var totGross = sources.reduce(function (a, s) { return a + s.gross; }, 0);
+  rows += "<tr><td><b>Total</b></td><td></td><td></td><td><b>" + fmt(totGross) + "</b></td><td><b>" +
+    fmt(totAlloc) + "</b></td><td><b>" + pct(totAlloc / totGross) + "</b></td></tr>";
+  document.querySelector("#src-table tbody").innerHTML = rows;
+}
+
+function stateOptions(sel) {
+  return Object.keys(STATES).map(function (code) {
+    return '<option value="' + code + '"' + (code === sel ? " selected" : "") + ">" +
+      STATES[code].name + "</option>";
+  }).join("");
+}
+
+function renderSetup() {
+  var fil = document.getElementById("set-filing");
+  if (fil.value !== settings.filing) fil.value = settings.filing;
+  var res = document.getElementById("set-res");
+  if (!res.options.length) res.innerHTML = stateOptions(settings.res);
+
+  var h = "";
+  sources.forEach(function (s) {
+    var isW2 = s.treat === "w2";
+    h += '<div class="src-row" data-id="' + s.id + '">' +
+      '<div class="who"><div class="m">' + s.name + '</div><span class="sub">' + s.sub + "</span></div>" +
+      '<div class="gross mono">' + fmt(s.gross) + "</div>" +
+      '<div class="field"><span class="label">Treatment</span><select data-f="treat">' +
+        '<option value="w2"' + (s.treat === "w2" ? " selected" : "") + ">W2 withheld</option>" +
+        '<option value="se"' + (s.treat === "se" ? " selected" : "") + ">1099 self emp</option>" +
+        '<option value="none"' + (s.treat === "none" ? " selected" : "") + ">Not taxable</option>" +
+      "</select></div>" +
+      '<div class="field"><span class="label">Work state</span><select data-f="state"' +
+        (s.treat === "none" ? " disabled" : "") + ">" + stateOptions(s.state) + "</select></div>" +
+      '<div class="field"><span class="label">Fed withheld</span><input type="number" data-f="fedWh" value="' +
+        s.fedWh + '"' + (isW2 ? "" : " disabled") + "></div>" +
+      '<div class="field"><span class="label">State withheld</span><input type="number" data-f="stWh" value="' +
+        s.stWh + '"' + (isW2 ? "" : " disabled") + "></div>" +
+      "</div>";
+  });
+  document.getElementById("src-setup").innerHTML = h;
+}
+
+/* ---------------- events ---------------- */
+document.getElementById("tabs").addEventListener("click", function (e) {
+  var btn = e.target.closest("[data-tab]");
+  if (!btn) return;
+  document.querySelectorAll("#tabs .chip").forEach(function (c) { c.classList.toggle("active", c === btn); });
+  ["estimate", "quarterly", "sources", "setup"].forEach(function (t) {
+    document.getElementById("view-" + t).hidden = t !== btn.dataset.tab;
+  });
+});
+document.getElementById("set-filing").addEventListener("change", function (e) {
+  settings.filing = e.target.value; render();
+});
+document.getElementById("set-res").addEventListener("change", function (e) {
+  settings.res = e.target.value; render();
+});
+document.getElementById("src-setup").addEventListener("change", function (e) {
+  var row = e.target.closest("[data-id]");
+  if (!row) return;
+  var s = sources.find(function (x) { return x.id === row.dataset.id; });
+  var f = e.target.dataset.f;
+  if (f === "fedWh" || f === "stWh") s[f] = Math.max(0, Number(e.target.value) || 0);
+  else s[f] = e.target.value;
+  if (f === "treat" && s.treat !== "w2") { s.fedWh = 0; s.stWh = 0; }
+  render();
+});
+
+render();
+</script>
+</body>
+</html>
