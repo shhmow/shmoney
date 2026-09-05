@@ -1,5 +1,20 @@
 # Runbook
 
+## REFINEMENT SESSION (2026-09-05): local loop + pending prod rollout
+
+Local dev with real data (see `.claude/launch.json` at the repo root):
+- `preview_start shmoney-dev` (or `npx wrangler dev --port 8787 --config app/wrangler.jsonc --var APP_PASSWORD:shmoney-dev` from the root). Local password is `shmoney-dev`.
+- Refresh the local copy of prod data: `cd app && npx wrangler d1 export shmoney --remote --output=/tmp/dump.sql && rm -rf .wrangler/state/v3/d1 && npx wrangler d1 execute shmoney --local --file=/tmp/dump.sql`. Local `.dev.vars` Plaid creds are dummies: sync / logo fetching only work in prod.
+- Query local data: `npx wrangler d1 execute shmoney --local --json --command "..."`.
+
+**Pending prod rollout (run from `app/`, in this order):**
+1. `npx wrangler d1 migrations apply shmoney --remote` (adds 0004 logos + 0005 nicknames/flags; additive only)
+2. `npx wrangler deploy`
+3. In the app: Settings → Maintenance → "Fetch logos" (pulls institution logos + merchant logos from Plaid), then "Re-apply rules & fixes" (refund repair, recurring). The daily cron does both on its own after that.
+4. `curl -s https://shmoney.josephlove076.workers.dev/api/version` should report the new build tag.
+
+New in this session: institution/network brand marks + Plaid logos, merchant logo tiles (Plaid logo_url, favicon proxy `/api/logo?domain=`), credit utilization + manual limits, account nicknames, transaction flags, "Open in bank / How to dispute" links (defaults in `src/lib/institutions.ts`, overridable in Settings → Bank links), amount search + filtered totals, `/api/stats` analysis layer on Cash flow, reconstructed net worth history, budget pace/MoM, recurring accounts/stale/upcoming, mobile nav (4 tabs + More) and bottom-sheet details.
+
 ## PRODUCTION (2026-08-25): shmoney on Cloudflare
 
 - **Live URL:** https://shmoney.josephlove076.workers.dev (skeleton Worker, [app/](../app/))

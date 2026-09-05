@@ -266,8 +266,9 @@ export default async function render(main) {
     let text = n > 0
       ? `Wrote ${n.toLocaleString("en-US")} snapshot${n === 1 ? "" : "s"}`
       : "No new snapshots written";
-    if (n === 0 && r.note) text += ` (${r.note})`;
-    else if (n === 0) text += " (history already covered)";
+    // The API's note for a zero result only explains the zero when there was
+    // nothing to reconstruct; otherwise every date already had a snapshot.
+    if (n === 0) text += r.note && /^no investment/i.test(r.note) ? ` (${r.note})` : " (history already covered)";
     if (unpriced.length) text += `; no price history for: ${unpriced.join(", ")}`;
     return text;
   })() : "";

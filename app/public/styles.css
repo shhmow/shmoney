@@ -467,3 +467,8 @@ figure svg { display: block; width: 100%; height: auto; }
 }
 .upc-row { display: flex; gap: 10px; align-items: baseline; padding: 4px 0; font-size: 13px; border-bottom: 1px solid var(--line); }
 .upc-row:last-of-type { border-bottom: none; }
+@media (max-width: 880px) {
+  /* keep the Activity filters reachable while scrolling a long list */
+  #txn-toolbar { position: sticky; top: 0; z-index: 5; background: var(--page); padding: 8px 0 10px; margin-bottom: 8px; }
+  #txn-toolbar input[type="date"] { flex: 1; min-width: 130px; }
+}

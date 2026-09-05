@@ -32,6 +32,18 @@ exportcsv.get("/csv", async (c) => {
   const table = c.req.query("table") ?? "transactions";
 
   if (table === "transactions") {
+    // Optional filters mirror GET /transactions so any Activity view can be exported.
+    const p = c.req.query();
+    const conds: string[] = [];
+    const binds: (string | number)[] = [];
+    if (p.from) { conds.push("t.date >= ?"); binds.push(p.from); }
+    if (p.to) { conds.push("t.date <= ?"); binds.push(p.to); }
+    if (p.account_id) { conds.push("t.account_id = ?"); binds.push(p.account_id); }
+    if (p.category_id === "none") conds.push("t.category_id IS NULL");
+    else if (p.category_id) { conds.push("t.category_id = ?"); binds.push(Number(p.category_id) || -1); }
+    if (p.q) { conds.push("(t.name LIKE ? OR t.merchant_name LIKE ? OR t.notes LIKE ?)"); const like = `%${p.q}%`; binds.push(like, like, like); }
+    if (p.flagged === "1") conds.push("t.flagged = 1");
+    const where = conds.length ? " WHERE " + conds.join(" AND ") : "";
     const rows = await q<{
       id: string;
       date: string;
@@ -44,22 +56,25 @@ exportcsv.get("/csv", async (c) => {
       mask: string | null;
       is_transfer: number;
       excluded: number;
+      flagged: number;
       notes: string | null;
     }>(
       c.env,
       `SELECT t.id, t.date, t.name, t.merchant_name, t.amount, t.pending,
               c.name AS category, a.name AS account, a.mask AS mask,
-              t.is_transfer, t.excluded, t.notes
+              t.is_transfer, t.excluded, t.flagged, t.notes
        FROM transactions t
        LEFT JOIN categories c ON c.id = t.category_id
-       JOIN accounts a ON a.id = t.account_id
+       JOIN accounts a ON a.id = t.account_id${where}
        ORDER BY t.date DESC, t.id DESC`,
+      ...binds,
     );
     const csv = toCsv(
-      ["id", "date", "name", "merchant", "amount", "pending", "category", "account", "mask", "is_transfer", "excluded", "notes"],
-      rows.map((r) => [r.id, r.date, r.name, r.merchant_name, r.amount, r.pending, r.category, r.account, r.mask, r.is_transfer, r.excluded, r.notes]),
+      ["id", "date", "name", "merchant", "amount", "pending", "category", "account", "mask", "is_transfer", "excluded", "flagged", "notes"],
+      rows.map((r) => [r.id, r.date, r.name, r.merchant_name, r.amount, r.pending, r.category, r.account, r.mask, r.is_transfer, r.excluded, r.flagged, r.notes]),
     );
-    return csvResponse(csv, "transactions.csv");
+    const suffix = [p.from, p.to].filter(Boolean).join("_to_");
+    return csvResponse(csv, suffix ? `transactions_${suffix}.csv` : "transactions.csv");
   }
 
   if (table === "holdings") {

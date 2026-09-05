@@ -52,7 +52,7 @@ function acctCard(a, group) {
   if (!a.mask && !a.institution_name) bits.push(esc(a.subtype || a.type || ""));
   const u = isCredit ? utilization(a) : null;
   const avail = isCredit && !u && a.available_balance != null ? `<span class="acct-sub">${fmtMoneyWhole(a.available_balance)} available</span>` : "";
-  const target = group === "investments" ? "#/invest" : `#/activity?account=${encodeURIComponent(a.id)}`;
+  const target = group === "investments" ? `#/invest?account=${encodeURIComponent(a.id)}` : `#/activity?account=${encodeURIComponent(a.id)}`;
   return `<a class="card acct-card clickable" href="${target}" style="text-decoration:none;color:inherit" aria-label="${esc(name)}, ${esc(fmtMoney(shown))}">
     <div class="acct-top">${instTile(a, { size: 30 })}<span class="acct-name" title="${esc(a.name)}">${esc(name)}</span>${networkBadge(a, 20)}</div>
     <span class="acct-bal${shown < 0 ? " neg" : ""}">${fmtMoney(shown)}</span>

@@ -154,6 +154,17 @@ async function fillMonthSummary(a) {
   } catch { el.textContent = ""; }
 }
 
+function exportHref() {
+  const p = new URLSearchParams({ table: "transactions" });
+  if (state.q) p.set("q", state.q);
+  if (state.categoryId) p.set("category_id", state.categoryId);
+  if (state.mode === "byacct" && state.accountId) p.set("account_id", state.accountId);
+  if (state.from) p.set("from", state.from);
+  if (state.to) p.set("to", state.to);
+  if (state.flagged) p.set("flagged", "1");
+  return "/api/export/csv?" + p.toString();
+}
+
 function totalsLine() {
   if (!state.transactions.length) return "";
   const parts = [`${state.total} transaction${state.total === 1 ? "" : "s"}`];
@@ -163,7 +174,7 @@ function totalsLine() {
     const net = state.sumIn - state.sumOut;
     parts.push(`net <b class="${net >= 0 ? "pos" : ""}">${fmtMoney(net, { cents: false })}</b>`);
   }
-  return `<div class="sub" style="margin:0 0 4px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><span>${parts.join(` ${MID} `)}</span></div>`;
+  return `<div class="sub" style="margin:0 0 4px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><span>${parts.join(` ${MID} `)}</span><a href="${exportHref()}" download style="text-decoration:none">Export CSV &#8595;</a></div>`;
 }
 
 function listHtml() {
