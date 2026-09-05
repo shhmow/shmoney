@@ -1,5 +1,5 @@
 import type { Env } from "../types";
-import { batch, first, run, stmt } from "./db";
+import { batch, first, q, run, stmt } from "./db";
 import { nowIso } from "./format";
 import { syncItem } from "../sync";
 
@@ -83,6 +83,47 @@ export async function createLinkToken(env: Env, opts?: { accessToken?: string })
   return res.link_token;
 }
 
+export interface InstitutionMeta {
+  name: string;
+  logo: string | null;          // base64 PNG
+  primary_color: string | null; // hex
+  url: string | null;
+}
+
+/** Institution name + branding (logo/colour/homepage) from Plaid. */
+export async function fetchInstitutionMeta(env: Env, institutionId: string): Promise<InstitutionMeta> {
+  const res = await plaidPost<{
+    institution: { name: string; logo?: string | null; primary_color?: string | null; url?: string | null };
+  }>(env, "/institutions/get_by_id", {
+    institution_id: institutionId,
+    country_codes: ["US"],
+    options: { include_optional_metadata: true },
+  });
+  const i = res.institution;
+  return { name: i.name, logo: i.logo ?? null, primary_color: i.primary_color ?? null, url: i.url ?? null };
+}
+
+/** Fill in branding for items linked before logos were stored. Returns items updated. */
+export async function ensureInstitutionMeta(env: Env, opts?: { force?: boolean }): Promise<number> {
+  const where = opts?.force ? "institution_id IS NOT NULL" : "institution_id IS NOT NULL AND logo IS NULL";
+  const rows = await q<{ id: number; institution_id: string }>(env, `SELECT id, institution_id FROM items WHERE ${where}`);
+  let n = 0;
+  for (const r of rows) {
+    try {
+      const m = await fetchInstitutionMeta(env, r.institution_id);
+      await run(
+        env,
+        "UPDATE items SET institution_name = ?1, logo = ?2, primary_color = ?3, url = ?4 WHERE id = ?5",
+        m.name, m.logo, m.primary_color, m.url, r.id,
+      );
+      n++;
+    } catch (e) {
+      console.log(`institution meta ${r.institution_id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return n;
+}
+
 export async function exchangePublicToken(env: Env, publicToken: string): Promise<{ item_id: number }> {
   const ex = await plaidPost<{ access_token: string; item_id: string }>(env, "/item/public_token/exchange", {
     public_token: publicToken,
@@ -92,30 +133,24 @@ export async function exchangePublicToken(env: Env, publicToken: string): Promis
     access_token: ex.access_token,
   });
   const institutionId = itemRes.item.institution_id;
-  let institutionName: string | null = null;
-  if (institutionId) {
-    try {
-      const inst = await plaidPost<{ institution: { name: string } }>(env, "/institutions/get_by_id", {
-        institution_id: institutionId,
-        country_codes: ["US"],
-      });
-      institutionName = inst.institution.name;
-    } catch {
-      // Name is cosmetic; do not fail the link over it.
-    }
-  }
+  // Name + branding are cosmetic; never fail the link over them.
+  const meta = institutionId ? await fetchInstitutionMeta(env, institutionId).catch(() => null) : null;
 
   await run(
     env,
-    `INSERT INTO items (plaid_item_id, access_token, institution_id, institution_name)
-     VALUES (?1, ?2, ?3, ?4)
+    `INSERT INTO items (plaid_item_id, access_token, institution_id, institution_name, logo, primary_color, url)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
      ON CONFLICT(plaid_item_id) DO UPDATE SET
        access_token = excluded.access_token,
        institution_id = excluded.institution_id,
        institution_name = excluded.institution_name,
+       logo = COALESCE(excluded.logo, items.logo),
+       primary_color = COALESCE(excluded.primary_color, items.primary_color),
+       url = COALESCE(excluded.url, items.url),
        status = 'active',
        last_error = NULL`,
-    ex.item_id, ex.access_token, institutionId, institutionName,
+    ex.item_id, ex.access_token, institutionId, meta?.name ?? null,
+    meta?.logo ?? null, meta?.primary_color ?? null, meta?.url ?? null,
   );
   const row = await first<{ id: number }>(env, "SELECT id FROM items WHERE plaid_item_id = ?", ex.item_id);
   if (!row) throw new Error("item row missing after insert");

@@ -7,7 +7,8 @@ import { q, first } from "../lib/db";
 
 export { q, first, run } from "../lib/db";
 export { createLinkToken, exchangePublicToken } from "../lib/plaid";
-export { syncAll, syncItem, applyRules } from "../sync";
+export { syncAll, syncItem, applyRules, backfillMerchantLogos } from "../sync";
+export { ensureInstitutionMeta } from "../lib/plaid";
 export type { SyncResult } from "../sync";
 export { rolloverBudgets } from "../sync/rollover";
 
@@ -74,8 +75,9 @@ export const TXN_JOIN =
 export const TXN_SELECT =
   "SELECT t.id, t.account_id, t.date, t.name, t.merchant_name, t.amount, t.pending, " +
   "t.category_id, t.plaid_category, t.payment_channel, t.is_transfer, t.excluded, t.notes, t.biz_category_id, " +
+  "t.logo_url, t.website, " +
   "c.name AS category_name, c.color AS category_color, c.kind AS category_kind, " +
-  "a.name AS account_name, a.mask AS account_mask " +
+  "a.name AS account_name, a.mask AS account_mask, a.item_id AS item_id, a.type AS account_type " +
   TXN_JOIN;
 
 export interface Txn {
@@ -93,6 +95,10 @@ export interface Txn {
   excluded: number;
   notes: string | null;
   biz_category_id: number | null;
+  logo_url: string | null;
+  website: string | null;
+  item_id: number;
+  account_type: string;
   category_name: string | null;
   category_color: string | null;
   category_kind: string | null;
@@ -114,11 +120,25 @@ export interface AccountRow {
   credit_limit: number | null;
   hidden: number;
   updated_at: string | null;
+  institution_id?: string | null;
+  institution_name?: string | null;
+  primary_color?: string | null;
+  institution_url?: string | null;
+  has_logo?: number;
+  brand?: string | null;
 }
 
 export const ACCOUNT_COLS =
   "id, item_id, name, official_name, mask, type, subtype, currency, " +
   "current_balance, available_balance, credit_limit, hidden, updated_at";
+
+// Accounts joined with their institution's branding (alias a = accounts, i = items).
+export const ACCOUNT_SELECT =
+  "SELECT a.id, a.item_id, a.name, a.official_name, a.mask, a.type, a.subtype, a.currency, " +
+  "a.current_balance, a.available_balance, a.credit_limit, a.hidden, a.updated_at, " +
+  "i.institution_id, i.institution_name, i.primary_color, i.url AS institution_url, " +
+  "(i.logo IS NOT NULL) AS has_logo " +
+  "FROM accounts a LEFT JOIN items i ON i.id = a.item_id";
 
 // ---------------------------------------------------------------------------
 // Common queries

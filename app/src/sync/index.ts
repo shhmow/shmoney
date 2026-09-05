@@ -1,7 +1,7 @@
 import type { Env } from "../types";
 import { batch, first, q, run, stmt, type PreparedStatement } from "../lib/db";
 import { addDays, nowIso, todayStr } from "../lib/format";
-import { PlaidError, plaidPost, upsertAccounts, type PlaidAccount } from "../lib/plaid";
+import { PlaidError, plaidPost, upsertAccounts, ensureInstitutionMeta, type PlaidAccount } from "../lib/plaid";
 
 export interface SyncResult {
   itemId: number;
@@ -31,6 +31,9 @@ interface PlaidTransaction {
   pending: boolean;
   payment_channel: string | null;
   personal_finance_category: { primary: string; detailed: string } | null;
+  logo_url?: string | null;
+  website?: string | null;
+  counterparties?: { name?: string; logo_url?: string | null; website?: string | null; type?: string }[] | null;
 }
 
 interface TxnSyncPage {
@@ -86,6 +89,8 @@ export async function syncItem(env: Env, itemId: number): Promise<SyncResult> {
   try {
     await syncTransactions(env, item, result);
     await snapshotBalances(env, itemId);
+    await ensureInstitutionMeta(env).catch(() => 0);
+    await backfillLogosIfMissing(env, itemId);
     if (await hasInvestmentAccounts(env, itemId)) {
       await syncHoldings(env, item, result);
       await syncInvestmentTransactions(env, item);
@@ -148,8 +153,18 @@ async function syncTransactions(env: Env, item: ItemRow, result: SyncResult): Pr
   console.log(`sync item ${item.id}: txns +${result.added} ~${result.modified} -${result.removed}`);
 }
 
+/** Merchant logo/website: Plaid's top-level fields, else the first merchant counterparty. */
+export function merchantBranding(t: PlaidTransaction): { logo_url: string | null; website: string | null } {
+  const cp = (t.counterparties ?? []).find((c) => c.logo_url || c.website);
+  return {
+    logo_url: t.logo_url ?? cp?.logo_url ?? null,
+    website: t.website ?? cp?.website ?? null,
+  };
+}
+
 function upsertTransactionStmt(env: Env, t: PlaidTransaction): PreparedStatement {
   const pfc = t.personal_finance_category;
+  const brand = merchantBranding(t);
   const isTransfer = pfc !== null && TRANSFER_PRIMARIES.has(pfc.primary) ? 1 : 0;
   // The stored plaid_category is the detailed code (it is prefixed by the
   // primary code, which the fallback mapping matches on).
@@ -165,17 +180,17 @@ function upsertTransactionStmt(env: Env, t: PlaidTransaction): PreparedStatement
     env,
     `INSERT OR REPLACE INTO transactions
        (id, account_id, date, name, merchant_name, amount, pending, plaid_category, payment_channel,
-        category_id, is_transfer, excluded, notes, biz_category_id, updated_at)
+        category_id, is_transfer, excluded, notes, biz_category_id, updated_at, logo_url, website)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
        (SELECT category_id FROM transactions WHERE id = ?1),
        COALESCE((SELECT is_transfer FROM transactions WHERE id = ?1), ?10),
        COALESCE((SELECT excluded FROM transactions WHERE id = ?1), 0),
        (SELECT notes FROM transactions WHERE id = ?1),
        (SELECT biz_category_id FROM transactions WHERE id = ?1),
-       ?11)`,
+       ?11, ?12, ?13)`,
     t.transaction_id, t.account_id, t.date, t.name, t.merchant_name, t.amount,
     t.pending ? 1 : 0, plaidCategory, t.payment_channel,
-    isTransfer, nowIso(),
+    isTransfer, nowIso(), brand.logo_url, brand.website,
   );
 }
 
@@ -376,6 +391,75 @@ async function syncInvestmentTransactions(env: Env, item: ItemRow): Promise<void
     offset += page.investment_transactions.length;
   } while (offset < total);
   console.log(`sync item ${item.id}: investment txns ${offset} of ${total}`);
+}
+
+// Self-healing: an item whose transactions carry no merchant logo at all
+// pre-dates the logo column, so pull them once (ordinary syncs keep it filled).
+async function backfillLogosIfMissing(env: Env, itemId: number): Promise<void> {
+  const row = await first<{ n: number; total: number }>(
+    env,
+    `SELECT COUNT(t.logo_url) AS n, COUNT(*) AS total FROM transactions t
+     JOIN accounts a ON a.id = t.account_id WHERE a.item_id = ?`,
+    itemId,
+  );
+  if (!row || row.total === 0 || row.n > 0) return;
+  const r = await backfillMerchantLogos(env, itemId);
+  console.log(`logo backfill item ${itemId}: scanned ${r.scanned}, updated ${r.updated}`);
+}
+
+/**
+ * One-off enrichment: /transactions/sync only delivers logos for rows added
+ * after the column existed, so pull the full window via /transactions/get and
+ * fill logo_url/website on existing rows. Returns rows updated.
+ */
+export async function backfillMerchantLogos(env: Env, onlyItemId?: number): Promise<{ scanned: number; updated: number }> {
+  const items = onlyItemId != null
+    ? await q<ItemRow>(env, "SELECT id, plaid_item_id, access_token, sync_cursor FROM items WHERE id = ?", onlyItemId)
+    : await q<ItemRow>(env, "SELECT id, plaid_item_id, access_token, sync_cursor FROM items WHERE status = 'active'");
+  const endDate = todayStr();
+  let scanned = 0;
+  let updated = 0;
+  for (const item of items) {
+    const bounds = await first<{ mn: string | null }>(
+      env,
+      "SELECT MIN(t.date) AS mn FROM transactions t JOIN accounts a ON a.id = t.account_id WHERE a.item_id = ?",
+      item.id,
+    );
+    const startDate = bounds?.mn ?? addDays(endDate, -730);
+    let offset = 0;
+    let total = 0;
+    try {
+      do {
+        const page = await plaidPost<{ transactions: PlaidTransaction[]; total_transactions: number }>(
+          env, "/transactions/get", {
+            access_token: item.access_token,
+            start_date: startDate,
+            end_date: endDate,
+            options: { count: 500, offset, include_personal_finance_category: true },
+          },
+        );
+        const stmts: PreparedStatement[] = [];
+        for (const t of page.transactions) {
+          scanned++;
+          const b = merchantBranding(t);
+          if (!b.logo_url && !b.website) continue;
+          stmts.push(stmt(
+            env,
+            "UPDATE transactions SET logo_url = COALESCE(?1, logo_url), website = COALESCE(?2, website) WHERE id = ?3",
+            b.logo_url, b.website, t.transaction_id,
+          ));
+        }
+        if (stmts.length) await batch(env, stmts);
+        updated += stmts.length;
+        total = page.total_transactions;
+        if (page.transactions.length === 0) break;
+        offset += page.transactions.length;
+      } while (offset < total);
+    } catch (e) {
+      console.log(`logo backfill item ${item.id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return { scanned, updated };
 }
 
 export async function applyRules(env: Env, opts?: { retroactive?: boolean }): Promise<number> {

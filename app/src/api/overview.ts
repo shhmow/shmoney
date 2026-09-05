@@ -13,10 +13,11 @@ import {
   monthEndExcl,
   SPEND_COND,
   TXN_SELECT,
-  ACCOUNT_COLS,
+  ACCOUNT_SELECT,
   type Txn,
   type AccountRow,
 } from "./util";
+import { accountLinks } from "../lib/institutions";
 
 export const overview = new Hono<{ Bindings: Env }>();
 
@@ -50,10 +51,8 @@ overview.get("/", async (c) => {
   const change1m = round2(current - base);
 
   // --- Account groups (hidden accounts excluded; loans grouped with credit).
-  const accounts = await q<AccountRow>(
-    env,
-    `SELECT ${ACCOUNT_COLS} FROM accounts WHERE hidden = 0 ORDER BY type, name`,
-  );
+  const accounts = (await q<AccountRow>(env, `${ACCOUNT_SELECT} WHERE a.hidden = 0 ORDER BY a.type, a.name`))
+    .map((a) => ({ ...a, brand: accountLinks(a.name, a.institution_id ?? null, a.institution_name ?? null)?.brand ?? null }));
   const cash = accounts.filter((a) => a.type === "depository");
   const credit = accounts.filter((a) => a.type === "credit" || a.type === "loan");
   const investments = accounts.filter((a) => a.type === "investment");

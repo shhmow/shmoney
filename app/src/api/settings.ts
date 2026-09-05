@@ -16,6 +16,8 @@ const ALLOWED_KEYS = [
   // JSON string: taxes tab profile — filing status, resident state, per-source
   // treatment/state/withholding, and per-payment year/jurisdiction attribution.
   "tax_profile",
+  // JSON string: per-institution link overrides {key: {activity, dispute, phone}}
+  "inst_links",
 ];
 
 export const settings = new Hono<{ Bindings: Env }>();

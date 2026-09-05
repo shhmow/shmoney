@@ -6,7 +6,7 @@ import { rolloverBudgets } from "./sync/rollover";
 
 const app = new Hono<{ Bindings: Env }>();
 
-const BUILD_TAG = "2026-08-26-quotes-1";
+const BUILD_TAG = "2026-09-05-logos-1";
 
 const SESSION_COOKIE = "shmoney_session";
 const SESSION_DAYS = 30;
