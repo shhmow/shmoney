@@ -100,11 +100,37 @@ const MERCHANT_DOMAINS = [
 
 const masked = (s) => !s || /^[\s*#\-_.0-9]*$/.test(s);
 
+// Bank boilerplate -> readable names. Order matters: first match wins.
+const DESCRIPTOR_RULES = [
+  [/^WIRE TYPE:\s*WIRE IN/i, "Wire transfer in"],
+  [/^WIRE TYPE:\s*WIRE OUT/i, "Wire transfer out"],
+  [/^Zelle payment to ([^;"]+?)(?: for\b.*)?(?:;|$)/i, (m) => `Zelle to ${m[1].trim()}`],
+  [/^Zelle payment from ([^;"]+?)(?: for\b.*)?(?:;|$)/i, (m) => `Zelle from ${m[1].trim()}`],
+  [/^MOBILE PURCHASE \d{4} (.+?)(?:\s+X{3,}.*)?$/i, (m) => m[1].replace(/\s+[A-Z]{2}$/, "").trim()],
+  [/^ONLINE\/MOBILE RECURRING FROM CHK (\d+)/i, (m) => `Autopay from checking ${m[1]}`],
+  [/^Online Scheduled Payment to ACCT# (\d+)/i, (m) => `Payment to card ${m[1]}`],
+  [/^AUTOPAY PAYMENT - THANK YOU/i, "Autopay payment"],
+  [/^DIRECTPAY FULL BALANCE/i, "Full balance payment"],
+  [/^PMNT SENT \d{4} APPLE CASH/i, "Apple Cash sent"],
+  [/^(.+?) DES:PAYROLL\b/i, (m) => `${titleCase(m[1])} payroll`],
+  [/^(.+?) DES:CRCARDPMT\b/i, (m) => `${titleCase(m[1])} card payment`],
+  [/^(.+?) DES:E-PAYMENT\b/i, (m) => `${titleCase(m[1])} payment`],
+  [/^(.+?) DES:ACH PMT\b/i, (m) => `${titleCase(m[1])} payment`],
+  [/^(.+?) DES:CASHREWARD\b/i, (m) => `${titleCase(m[1])} cash rewards`],
+];
+function titleCase(s) {
+  return String(s).toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()).replace(/\bOf\b/g, "of");
+}
+
 /** Display name: cleaned merchant unless it is masked/garbled, then a tidied raw name. */
 export function merchantLabel(t) {
   const m = (t.merchant_name || "").trim();
-  if (m && !masked(m)) return m;
   const raw = (t.name || "").trim();
+  for (const [re, out] of DESCRIPTOR_RULES) {
+    const mm = raw.match(re);
+    if (mm) return typeof out === "function" ? out(mm) : out;
+  }
+  if (m && !masked(m)) return m;
   // Drop bank boilerplate ("DES:", "ID:", "INDN:", "CO ID:", confirmation numbers).
   const cut = raw.split(/\s+(?:DES|ID|INDN|CO ID|PMT INFO|CONF#|Conf#|Confirmation#|Confirmation)[:\s#]/i)[0];
   return (cut || raw || "Unknown").replace(/\s{2,}/g, " ").slice(0, 60);

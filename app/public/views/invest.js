@@ -1,7 +1,8 @@
-// Invest: hero portfolio-vs-SPY chart, account filter, allocation-by-type donut
-// with drill-down, sector exposure vs benchmark, concentration stat tiles,
-// sector pulse, sortable holdings (cost-basis gain + held since), checks,
-// retirement, backfill, and the Claude-written analysis card.
+// Invest: hero portfolio-vs-SPY chart, account filter, holdings table
+// (sortable, with 1D/1M market returns), allocation-by-type donut with
+// drill-down, sector exposure vs benchmark, concentration stat tiles,
+// collapsible sector pulse, checks, retirement, backfill, and the
+// Claude-written analysis card.
 //
 // Data: /api/investments plus /api/market/{sectors,pulse,performance}, all
 // fetched in parallel and all scoped by ?account_id=. The /investments payload
@@ -13,10 +14,19 @@ import {
 } from "../lib/format.js";
 import { lineChart, donutChart, hbar, rangeDelta, deltaBadge } from "../lib/investcharts.js";
 
-const RANGES = { "1M": 31, "1Y": 366, "All": Infinity };
-const RANGE_LABELS = { "1M": "past month", "1Y": "past year" };
+const RANGE_KEYS = ["1M", "YTD", "1Y", "All"];
+const RANGE_LABELS = { "1M": "past month", "YTD": "year to date", "1Y": "past year" };
 let activeRange = "1Y";
 let customRange = null; // { from, to } 'YYYY-MM-DD', drag-selected zoom window
+
+/** Earliest date a range chip shows, or null for "everything". */
+function rangeCutoff(r) {
+  const now = new Date();
+  if (r === "1M") { now.setDate(now.getDate() - 31); return now; }
+  if (r === "1Y") { now.setDate(now.getDate() - 366); return now; }
+  if (r === "YTD") return new Date(now.getFullYear(), 0, 1, 0, 0, 0);
+  return null;
+}
 
 const ACCT_KEY = "shmoney_invest_acct";
 let acctFilter = sessionStorage.getItem(ACCT_KEY) || "";
@@ -24,9 +34,12 @@ let acctFilter = sessionStorage.getItem(ACCT_KEY) || "";
 let sortKey = "value";
 let sortDir = -1; // -1 = descending
 let allocSel = null; // selected allocation class (drill-down)
+let pulseOpen = false; // sector pulse is collapsed by default
+let lastBackfill = null; // result of the most recent "Reconstruct history", shown once
 
 const YOU_COLOR = "#1fa168";
 const SPY_COLOR = "#69776e";
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 const CLASS_META = {
   stocks: { label: "Stocks", color: "#1fa168" },
@@ -43,6 +56,8 @@ const HOLDING_COLS = [
   { key: "name", label: "Holding" },
   { key: "quantity", label: "Shares" },
   { key: "value", label: "Value" },
+  { key: "r1d", label: "1D" },
+  { key: "r1m", label: "1M" },
   { key: "gain", label: "Gain" },
   { key: "gainPct", label: "Gain %" },
   { key: "heldSince", label: "Held since" },
@@ -54,6 +69,18 @@ const settle = (p) => p.then((v) => ({ ok: true, v }), (e) => ({ ok: false, e })
 function signedPct(n, digits = 1) {
   const v = Number(n) || 0;
   return (v > 0 ? "+" : "") + fmtPct(v, digits);
+}
+
+/** Signed whole dollars: +$1,200 / −$300 (U+2212). */
+function signedMoney(n) {
+  const v = Math.round(Number(n) || 0);
+  return (v > 0 ? "+" : "") + fmtMoneyWhole(v);
+}
+
+/** 'Mar 6, 2025' — always carries the year (custom-range labels span years). */
+function fmtDateY(d) {
+  const dt = parseDate(d);
+  return `${MONTHS[dt.getMonth()]} ${dt.getDate()}, ${dt.getFullYear()}`;
 }
 
 function retCell(v, extraCls = "") {
@@ -89,8 +116,8 @@ function sortedHoldings(holdings) {
       if (bv == null) return -1;
       return sortDir * String(av).localeCompare(String(bv));
     }
-    const av = a[sortKey] == null ? null : Number(a[sortKey]);
-    const bv = b[sortKey] == null ? null : Number(b[sortKey]);
+    const av = a[sortKey] == null || !Number.isFinite(Number(a[sortKey])) ? null : Number(a[sortKey]);
+    const bv = b[sortKey] == null || !Number.isFinite(Number(b[sortKey])) ? null : Number(b[sortKey]);
     if (av == null && bv == null) return 0;
     if (av == null) return 1; // nulls last either direction
     if (bv == null) return -1;
@@ -102,6 +129,12 @@ function sortedHoldings(holdings) {
 const sectionSkel = (h = 120) => `<div class="skel iv-skel" style="height:${h}px" aria-hidden="true"></div>`;
 const errLine = (what, e) =>
   `<p class="iv-err">Couldn't load ${what}. ${esc((e && e.message) || "Request failed.")}</p>`;
+
+const CHECK_PILL = {
+  pass: { cls: "ok", text: "Pass" },
+  check: { cls: "wait", text: "Check" },
+  none: { cls: "iv-none", text: "No data" },
+};
 
 export default async function render(main) {
   // Page-level skeleton for the initial /investments wait (also covers re-renders).
@@ -133,6 +166,10 @@ export default async function render(main) {
   const retirement = data.retirement || null;
   const pricesAsOf = data.pricesAsOf || null;
   const analysis = data.analysis || null;
+  // External cash flows (deposits positive, withdrawals negative) by date, in
+  // the same account scope as the series; lets the hero separate contributions
+  // from market gain over any visible window.
+  const flows = Array.isArray(data.contributions) ? data.contributions : [];
 
   // Allocation by security type (donut + drill-down). The API provides it;
   // fall back to grouping holdings client-side just in case.
@@ -174,6 +211,9 @@ export default async function render(main) {
   const prevVal = (Number(pf.value) || 0) - day;
   const dayPct = prevVal !== 0 ? Math.abs(day / prevVal) * 100 : 0;
   const series = Array.isArray(pf.series) ? pf.series : [];
+  // A series that never rises above $0 (an emptied account) has nothing to
+  // chart; show a plain message instead of a flat line on a negative axis.
+  const seriesHasValue = series.some((p) => (Number(p.value) || 0) > 0);
 
   const allocSegs = allocation
     .map((a) => ({
@@ -189,11 +229,34 @@ export default async function render(main) {
 
   const roth = retirement && retirement.roth;
   const ira = retirement && retirement.inheritedIra;
-  const monthsLeftInYear = 12 - new Date().getMonth();
   const needsBackfill = true; // reconstruction is idempotent; keep it reachable
 
   const analysisBullets = analysis && Array.isArray(analysis.bullets) ? analysis.bullets.filter((b) => typeof b === "string" && b) : [];
-  const analysisDate = analysis && analysis.written_at ? fmtDate(String(analysis.written_at).slice(0, 10)) : "";
+  const analysisDay = analysis && analysis.written_at ? String(analysis.written_at).slice(0, 10) : "";
+  const analysisDate = analysisDay ? fmtDate(analysisDay) : "";
+  const analysisAgeDays = analysisDay ? Math.floor((Date.now() - parseDate(analysisDay).getTime()) / 86400000) : null;
+
+  // Roth deadline: contributions for tax year Y are accepted until Apr 15, Y+1.
+  const rothYear = roth && roth.taxYear ? Number(roth.taxYear) : new Date().getFullYear();
+  const rothDeadline = roth && roth.deadline ? roth.deadline : `${rothYear + 1}-04-15`;
+  const rothDays = roth && roth.daysToDeadline != null
+    ? Number(roth.daysToDeadline)
+    : Math.max(0, Math.ceil((parseDate(rothDeadline).getTime() - Date.now()) / 86400000));
+
+  // One-shot result line from the last backfill run (cleared after this paint).
+  const backfillLine = lastBackfill ? (() => {
+    const r = lastBackfill;
+    const n = Number(r.snapshots) || 0;
+    const unpriced = Array.isArray(r.unpricedSecurities) ? r.unpricedSecurities : [];
+    let text = n > 0
+      ? `Wrote ${n.toLocaleString("en-US")} snapshot${n === 1 ? "" : "s"}`
+      : "No new snapshots written";
+    if (n === 0 && r.note) text += ` (${r.note})`;
+    else if (n === 0) text += " (history already covered)";
+    if (unpriced.length) text += `; no price history for: ${unpriced.join(", ")}`;
+    return text;
+  })() : "";
+  lastBackfill = null;
 
   main.innerHTML = `<div class="page">
     <div class="pagehead">
@@ -214,37 +277,60 @@ export default async function render(main) {
     </div>` : ""}
 
     <div class="card">
-      ${series.length >= 1
+      ${series.length >= 1 && seriesHasValue
         ? `<figure><svg id="pf-chart" viewBox="0 0 900 220" role="img" aria-label="Portfolio value over time versus the S&amp;P 500. Drag horizontally to zoom to a custom date range."></svg></figure>
            <div class="legend" id="pf-legend"><span><i style="background:${YOU_COLOR}"></i>You</span></div>
            <div class="iv-compare" id="pf-compare"></div>`
-        : `<p class="iv-err" style="margin:0">No history yet. Daily snapshots start today.</p>`}
+        : series.length >= 1
+          ? `<p class="iv-err" style="margin:0">${filteredAcct
+              ? `${esc(filteredAcct.name)} holds ${fmtMoneyWhole(filteredAcct.value)} right now and has no value history to chart.`
+              : "Portfolio value has been $0 for the whole recorded history."}</p>`
+          : `<p class="iv-err" style="margin:0">No history yet. Daily snapshots start today.</p>`}
       ${needsBackfill ? `
       <div class="muted-note" style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <span>Rebuild past history from transactions:</span>
         <button type="button" class="btn small" id="pf-backfill">Reconstruct history</button>
-        <span class="muted-note" id="pf-backfill-msg" style="color:var(--crit)" hidden></span>
+        <span class="muted-note" id="pf-backfill-msg" role="status"${backfillLine ? "" : " hidden"}>${esc(backfillLine)}</span>
       </div>` : ""}
     </div>
 
     <div class="card" style="margin-top:14px">
-      <div class="label" style="margin-bottom:10px">Analysis</div>
-      ${analysis ? `
-      <div class="iv-analysis">
-        <div class="hl">${esc(analysis.headline || "")}</div>
-        ${analysisBullets.length ? `<ul>${analysisBullets.map((b) => `<li>${esc(b)}</li>`).join("")}</ul>` : ""}
-        <div class="by">by Claude${analysisDate ? ` ${MID} ${esc(analysisDate)}` : ""}</div>
-      </div>` : `<p class="iv-err" style="margin:0">Run /invest-review in Claude Code to generate.</p>`}
+      <div class="label" style="margin-bottom:2px">Holdings${filteredAcct ? ` ${MID} ${esc(filteredAcct.name)}` : ""}</div>
+      ${pricesAsOf ? `<div class="muted-note" style="margin-bottom:8px">prices as of ${esc(fmtDate(pricesAsOf))}</div>` : `<div style="height:8px"></div>`}
+      ${holdings.length ? `
+      <div class="table-wrap">
+      <table class="iv-holdings">
+        <thead><tr id="holdings-head"></tr></thead>
+        <tbody id="holdings-body"></tbody>
+      </table>
+      </div>
+      <p class="iv-foot" id="holdings-foot" hidden></p>` : emptyState({ title: "No holdings yet", body: filteredAcct ? "Nothing in this account yet." : "Holdings sync in from linked accounts.", glyph: "chart" })}
     </div>
 
     ${accts.length ? `
-    <div class="grid acct" style="margin-top:14px">
-      ${accts.map((a) => `<div class="card acct-card">
+    <div class="grid acct" style="margin-top:14px" role="group" aria-label="Accounts">
+      ${accts.map((a) => {
+        const on = String(a.id) === String(acctFilter);
+        return `<button type="button" class="card acct-card clickable iv-acct" data-acct="${esc(a.id)}" aria-pressed="${on}"
+          aria-label="${esc(a.name)}, ${esc(fmtMoneyWhole(a.value))}. ${on ? "Showing this account; activate to show all accounts." : "Activate to filter to this account."}">
         <span class="acct-name">${esc(a.name)}</span>
         <span class="acct-bal">${fmtMoneyWhole(a.value)}</span>
-        <span class="acct-sub">${esc(a.subtype || "investment")}</span>
-      </div>`).join("")}
+        <span class="acct-sub">${esc(a.subtype || "investment")}${on ? ` ${MID} filtering` : ""}</span>
+      </button>`;
+      }).join("")}
     </div>` : ""}
+
+    <div class="card" style="margin-top:14px">
+      <div class="label" style="margin-bottom:10px">Analysis</div>
+      ${analysis ? `
+      ${filteredAcct ? `<p class="muted-note" style="margin:0 0 10px">Covers the whole portfolio, not just ${esc(filteredAcct.name)}.</p>` : ""}
+      <div class="iv-analysis">
+        <div class="hl">${esc(analysis.headline || "")}</div>
+        ${analysisBullets.length ? `<ul>${analysisBullets.map((b) => `<li>${esc(b)}</li>`).join("")}</ul>` : ""}
+        <div class="by">by Claude${analysisDate ? ` ${MID} ${esc(analysisDate)}` : ""}${analysisAgeDays != null && analysisAgeDays > 14
+          ? ` <span class="iv-stale">written ${esc(analysisDate)}, ${analysisAgeDays} days ago</span>` : ""}</div>
+      </div>` : `<p class="iv-err" style="margin:0">Run /invest-review in Claude Code to generate.</p>`}
+    </div>
 
     <div class="card" style="margin-top:14px">
       <div class="label" style="margin-bottom:12px">Allocation by type</div>
@@ -268,49 +354,55 @@ export default async function render(main) {
     </div>
 
     <div class="card" style="margin-top:14px">
-      <div class="label" style="margin-bottom:12px">Sector pulse</div>
-      <div id="pulse-body">${sectionSkel(200)}</div>
-    </div>
-
-    <div class="card" style="margin-top:14px">
-      <div class="label" style="margin-bottom:2px">Holdings${filteredAcct ? ` ${MID} ${esc(filteredAcct.name)}` : ""}</div>
-      ${pricesAsOf ? `<div class="muted-note" style="margin-bottom:8px">prices as of ${esc(fmtDate(pricesAsOf))}</div>` : `<div style="height:8px"></div>`}
-      ${holdings.length ? `
-      <div class="table-wrap">
-      <table>
-        <thead><tr id="holdings-head"></tr></thead>
-        <tbody id="holdings-body"></tbody>
-      </table>
-      </div>` : emptyState({ title: "No holdings yet", body: filteredAcct ? "Nothing in this account yet." : "Holdings sync in from linked accounts.", glyph: "chart" })}
+      <div class="iv-cardhead">
+        <div class="label">Sector pulse</div>
+        <button type="button" class="btn small" id="pulse-toggle" aria-expanded="${pulseOpen}" aria-controls="pulse-body">${pulseOpen ? "Hide sector pulse" : "Show sector pulse"}</button>
+      </div>
+      <div id="pulse-body" style="margin-top:12px"${pulseOpen ? "" : " hidden"}>${sectionSkel(200)}</div>
     </div>
 
     <div class="grid two" style="margin-top:14px">
       <div class="card">
         <div class="label" style="margin-bottom:10px">Portfolio checks</div>
-        ${checks.length ? checks.map((c) => `<div class="txn">
+        ${checks.length ? checks.map((c) => {
+          const pill = CHECK_PILL[c.status] || CHECK_PILL.check;
+          return `<div class="txn">
             <div class="who"><div class="m" style="font-size:13.5px">${esc(c.label)}</div><div class="meta">${esc(c.detail || "")}</div></div>
-            <span class="pill ${c.status === "pass" ? "ok" : "wait"}">&#9679; ${c.status === "pass" ? "Pass" : "Check"}</span>
-          </div>`).join("") : `<p class="sub">Checks run after holdings sync in.</p>`}
+            <span class="pill ${pill.cls}">&#9679; ${pill.text}</span>
+          </div>`;
+        }).join("") : `<p class="sub">Checks run after holdings sync in.</p>`}
       </div>
       <div class="card">
         <div class="label" style="margin-bottom:10px">Retirement</div>
         ${roth ? `
         <div class="brow" style="border-bottom:1px solid var(--line)">
-          <div class="top"><span class="name" style="font-size:13.5px">Roth IRA ${MID} ${new Date().getFullYear()}</span>
+          <div class="top"><span class="name" style="font-size:13.5px">Roth IRA ${MID} ${rothYear}</span>
             <span class="nums"><b>${fmtMoneyWhole(roth.contributed)}</b> / ${fmtMoneyWhole(roth.limit)}</span></div>
           <div class="track"><div class="fill" style="width:${Number(roth.limit) > 0 ? Math.min(100, (Number(roth.contributed) || 0) / Number(roth.limit) * 100) : 0}%"></div></div>
           <div class="sub" style="margin-top:7px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-            <span>${fmtMoneyWhole(roth.room)} room ${MID} ${monthsLeftInYear} month${monthsLeftInYear === 1 ? "" : "s"} left</span>
-            <button type="button" class="btn small" id="roth-edit">Update contributed</button></div>
+            <span>${fmtMoneyWhole(roth.room)} room ${MID} ${rothDays.toLocaleString("en-US")} day${rothDays === 1 ? "" : "s"} to ${esc(fmtDateY(rothDeadline))}</span>
+            <button type="button" class="btn small" id="roth-edit" aria-expanded="false" aria-controls="roth-form">Update</button></div>
           <div id="roth-form"></div>
         </div>` : ""}
-        ${ira ? `
+        ${ira ? (() => {
+          const cur = ira.currentValue;
+          const acctName = ira.accountName || "Inherited IRA";
+          const yearsLeft = Number(ira.remainingYears) || Math.max(1, 11 - (Number(ira.year) || 1));
+          const basisLine = cur != null && cur > 0
+            ? `Based on ${esc(acctName)} at ${fmtMoneyWhole(cur)} over ${yearsLeft} year${yearsLeft === 1 ? "" : "s"} left.`
+            : cur === 0
+              ? `${esc(acctName)} is $0 right now. Suggested uses the starting balance from Settings over ${yearsLeft} year${yearsLeft === 1 ? "" : "s"} left.`
+              : `No inherited IRA account found. Suggested uses the starting balance from Settings over ${yearsLeft} year${yearsLeft === 1 ? "" : "s"} left.`;
+          return `
         <div class="brow">
           <div class="top"><span class="name" style="font-size:13.5px">Inherited IRA ${MID} 10 year rule</span>
             <span class="nums"><b>year ${esc(String(ira.year))}</b> / ${esc(String(ira.of || 10))}</span></div>
           <div class="track"><div class="fill" style="width:${Math.min(100, (Number(ira.year) || 0) / (Number(ira.of) || 10) * 100)}%"></div></div>
           <div class="sub" style="margin-top:5px">Suggested this year ${fmtMoneyWhole(ira.suggested)} ${MID} taken ${fmtMoneyWhole(ira.taken)}</div>
-        </div>` : ""}
+          <div class="muted-note" style="margin-top:4px">${basisLine}${ira.deadline ? ` Window closes ${esc(fmtDateY(ira.deadline))}.` : ""}</div>
+          <div class="muted-note" style="margin-top:2px">Annual RMDs may also apply under post-2024 rules.</div>
+        </div>`;
+        })() : ""}
         ${!roth && !ira ? `<p class="sub" style="margin:0">Set Roth and IRA details in <a href="#/settings">Settings</a>.</p>` : ""}
       </div>
     </div>
@@ -335,13 +427,11 @@ export default async function render(main) {
       else { customRange = null; renderChips(); } // window no longer valid for this series
     }
     if (customRange) {
-      windowLabel = `${fmtDate(customRange.from)} to ${fmtDate(customRange.to)}`;
+      windowLabel = `${fmtDateY(customRange.from)} to ${fmtDateY(customRange.to)}`;
     } else {
-      const days = RANGES[activeRange];
+      const cutoff = rangeCutoff(activeRange);
       let sliced = false;
-      if (days !== Infinity && series.length >= 2) {
-        const cutoff = new Date();
-        cutoff.setDate(cutoff.getDate() - days);
+      if (cutoff && series.length >= 2) {
         const f = series.filter((p) => parseDate(p.date) >= cutoff);
         // Only a real slice counts; f === whole series means the data is
         // shorter than the requested window.
@@ -360,24 +450,33 @@ export default async function render(main) {
     }];
     // Overlay SPY, indexed to the portfolio's value where the two series first
     // overlap, so both lines share the same dollar axis and start together.
+    // Only when the benchmark actually covers the window's start (a few days'
+    // slack for weekends/holidays); otherwise the overlay and the S&P number
+    // are hidden rather than shown over a shorter, misleading span.
     let spyWin = null;
-    if (spySeries && spySeries.length >= 2 && pts.length >= 1) {
+    let spyCovers = false;
+    if (spySeries && spySeries.length >= 2 && pts.length >= 2) {
       const start = pts[0].date;
-      let win = spySeries.filter((p) => p.date >= start);
-      if (customRange) win = win.filter((p) => p.date <= customRange.to);
-      if (win.length < 2) win = spySeries;
-      const anchor = pts.find((p) => p.date >= win[0].date) || pts[0];
-      const base = Number(win[0].close);
-      const baseVal = Number(anchor.value) || 0;
-      if (base > 0 && baseVal > 0) {
-        spyWin = win;
-        list.push({
-          points: win.map((p) => ({ date: p.date, value: (Number(p.close) / base) * baseVal })),
-          color: SPY_COLOR, label: "S&P 500", dash: true,
-        });
+      const end = pts[pts.length - 1].date;
+      const slack = parseDate(start);
+      slack.setDate(slack.getDate() + 7);
+      spyCovers = parseDate(spySeries[0].date) <= slack;
+      const win = spyCovers ? spySeries.filter((p) => p.date >= start && p.date <= end) : [];
+      if (win.length >= 2) {
+        const anchor = pts.find((p) => p.date >= win[0].date) || pts[0];
+        const base = Number(win[0].close);
+        const baseVal = Number(anchor.value) || 0;
+        if (base > 0 && baseVal > 0) {
+          spyWin = win;
+          list.push({
+            points: win.map((p) => ({ date: p.date, value: (Number(p.close) / base) * baseVal })),
+            color: SPY_COLOR, label: "S&P 500", dash: true,
+          });
+        }
       }
     }
     lineChart(svg, list, {
+      yMin: 0, // portfolio value never reads below $0 on the axis
       onRangeSelect: (from, to) => {
         const win = series.filter((p) => p.date >= from && p.date <= to);
         if (win.length < 2) return; // too tight to zoom into
@@ -392,21 +491,43 @@ export default async function render(main) {
         (list.length > 1 ? `<span><i style="background:${SPY_COLOR}"></i>S&amp;P 500 indexed</span>` : "");
     }
     // Per-range change next to the hero value (first vs last visible point).
+    // This is the change in VALUE, which includes money moved in and out; the
+    // compare line below splits it into contributions and market gain.
     const youD = rangeDelta(pts.map((p) => Number(p.value) || 0));
     const deltaEl = document.getElementById("pf-delta");
     if (deltaEl && youD) {
       const dayHtml = day !== 0
         ? ` <span class="sub">${MID} today ${day > 0 ? "+" : MINUS}${fmtMoneyWhole(Math.abs(day))}</span>`
         : "";
-      deltaEl.innerHTML = deltaBadge(youD, windowLabel) + dayHtml;
+      deltaEl.innerHTML = deltaBadge(youD, `${windowLabel} (incl. contributions)`) + dayHtml;
     }
-    // Explicit you-vs-S&P % comparison over the same visible window.
+    // Explicit you-vs-S&P % comparison over the same visible window, plus the
+    // contributions split. Flows dated after the window's first point and up
+    // to its last point are the money that moved during the window.
     const cmp = document.getElementById("pf-compare");
     if (cmp) {
       const spyD = spyWin ? rangeDelta(spyWin.map((p) => Number(p.close) || 0)) : null;
-      cmp.innerHTML = (youD && youD.pct != null && spyD && spyD.pct != null)
-        ? `You ${pctSpan(youD.pct)} / S&amp;P ${pctSpan(spyD.pct)}`
-        : "";
+      const lines = [];
+      if (youD && youD.pct != null) {
+        const spyPart = spyD && spyD.pct != null
+          ? `S&amp;P 500 ${pctSpan(spyD.pct)}`
+          : `S&amp;P 500 ${MID} no benchmark data for this window`;
+        lines.push(`Value change ${pctSpan(youD.pct)} incl. contributions / ${spyPart}`);
+        const from = pts[0].date, to = pts[pts.length - 1].date;
+        const contrib = flows
+          .filter((f) => f.date > from && f.date <= to)
+          .reduce((s, f) => s + (Number(f.amount) || 0), 0);
+        if (Math.round(contrib) !== 0) {
+          const gain = youD.change - contrib;
+          // Contributions assumed mid-window (simple Dietz), so the return
+          // is an estimate rather than a time-weighted figure.
+          const denom = youD.first + contrib / 2;
+          const gainPct = denom > 0 ? (gain / denom) * 100 : null;
+          lines.push(`Of which net contributions ${signedMoney(contrib)} ${MID} market gain ${signedMoney(gain)}`
+            + (gainPct != null ? ` (${pctSpan(gainPct)} approx)` : ""));
+        }
+      }
+      cmp.innerHTML = lines.map((l) => `<div>${l}</div>`).join("");
     }
   };
 
@@ -414,10 +535,10 @@ export default async function render(main) {
   const renderChips = () => {
     const row = document.getElementById("pf-ranges");
     if (!row) return;
-    row.innerHTML = Object.keys(RANGES).map((r) =>
+    row.innerHTML = RANGE_KEYS.map((r) =>
       `<button type="button" class="chip${!customRange && r === activeRange ? " active" : ""}" data-range="${r}">${r}</button>`).join("")
       + (customRange
-        ? `<button type="button" class="chip active" id="pf-custom" aria-label="Custom range ${esc(fmtDate(customRange.from))} to ${esc(fmtDate(customRange.to))}. Activate to clear.">${esc(fmtDate(customRange.from))} to ${esc(fmtDate(customRange.to))}<span class="x" aria-hidden="true">&#215;</span></button>`
+        ? `<button type="button" class="chip active" id="pf-custom" aria-label="Custom range ${esc(fmtDateY(customRange.from))} to ${esc(fmtDateY(customRange.to))}. Activate to clear.">${esc(fmtDateY(customRange.from))} to ${esc(fmtDateY(customRange.to))}<span class="x" aria-hidden="true">&#215;</span></button>`
         : "");
     row.querySelectorAll("[data-range]").forEach((b) => b.addEventListener("click", () => {
       activeRange = b.dataset.range;
@@ -435,34 +556,50 @@ export default async function render(main) {
   renderChips();
   drawPf();
 
-  // account filter chips
-  main.querySelectorAll("#pf-accts .chip").forEach((b) => b.addEventListener("click", () => {
-    const id = b.dataset.acct || "";
+  // account filter: chips at the top and the account cards further down
+  const setAcct = (id) => {
     if (id === acctFilter) return;
     acctFilter = id;
     allocSel = null;
     if (id) sessionStorage.setItem(ACCT_KEY, id);
     else sessionStorage.removeItem(ACCT_KEY);
     render(main);
+  };
+  main.querySelectorAll("#pf-accts .chip").forEach((b) => b.addEventListener("click", () => setAcct(b.dataset.acct || "")));
+  main.querySelectorAll(".iv-acct").forEach((b) => b.addEventListener("click", () => {
+    const id = b.dataset.acct || "";
+    setAcct(id === acctFilter ? "" : id); // clicking the active card returns to all accounts
   }));
 
   // history backfill
   const bf = main.querySelector("#pf-backfill");
   if (bf) bf.addEventListener("click", async () => {
     const msg = main.querySelector("#pf-backfill-msg");
-    msg.hidden = true;
+    msg.style.color = "";
+    msg.textContent = "Working";
+    msg.hidden = false;
     bf.disabled = true;
     const orig = bf.textContent;
-    bf.textContent = "Reconstructing…";
+    bf.textContent = "Working";
     try {
-      await api.post("/investments/backfill", {});
+      lastBackfill = (await api.post("/investments/backfill", {})) || { snapshots: 0 };
       render(main);
     } catch (err) {
       bf.disabled = false;
       bf.textContent = orig;
+      msg.style.color = "var(--crit)";
       msg.textContent = err.message || "Backfill failed";
-      msg.hidden = false;
     }
+  });
+
+  // sector pulse: collapsed by default; the data was fetched with the page
+  const pulseToggle = main.querySelector("#pulse-toggle");
+  if (pulseToggle) pulseToggle.addEventListener("click", () => {
+    pulseOpen = !pulseOpen;
+    const body = main.querySelector("#pulse-body");
+    if (body) body.hidden = !pulseOpen;
+    pulseToggle.setAttribute("aria-expanded", String(pulseOpen));
+    pulseToggle.textContent = pulseOpen ? "Hide sector pulse" : "Show sector pulse";
   });
 
   // ---------------------------------------------------- allocation drill-down
@@ -512,6 +649,8 @@ export default async function render(main) {
     </div>`;
   };
 
+  // One decimal everywhere in the allocation card (donut center, legend,
+  // drill-down) so the same slice never reads "1%" in one place and "1.5%" in another.
   const renderAlloc = () => {
     const svg = document.getElementById("alloc-donut");
     const legend = document.getElementById("alloc-legend");
@@ -521,14 +660,14 @@ export default async function render(main) {
       : allocSegs[0];
     donutChart(svg, allocSegs, {
       selectedKey: allocSel,
-      center: center ? { big: String(Math.round(center.pct)), unit: "%", small: center.label.toUpperCase() } : {},
+      center: center ? { big: fmtPct(center.pct).replace("%", ""), unit: "%", small: center.label.toUpperCase() } : {},
       onSelect: (key) => { allocSel = key; renderAlloc(); renderDrill(); },
     });
     legend.innerHTML = allocSegs.map((a) => `
       <button type="button" class="iv-legend-btn" data-cls="${esc(a.key)}" aria-pressed="${allocSel === a.key}">
         <i style="background:${a.color}"></i>${esc(a.label)}
         <span class="val">${fmtMoneyWhole(a.value)}</span>
-        <span class="pct">${Math.round(a.pct)}%</span>
+        <span class="pct">${fmtPct(a.pct)}</span>
       </button>`).join("");
     legend.querySelectorAll(".iv-legend-btn").forEach((b) => b.addEventListener("click", () => {
       allocSel = allocSel === b.dataset.cls ? null : b.dataset.cls;
@@ -538,21 +677,27 @@ export default async function render(main) {
   };
   if (allocSegs.length) { renderAlloc(); renderDrill(); }
 
-  // roth inline edit -> PUT /settings
+  // roth inline edit (contributed + annual limit) -> PUT /settings
   const rothEdit = main.querySelector("#roth-edit");
   if (rothEdit) rothEdit.addEventListener("click", () => {
     const slot = main.querySelector("#roth-form");
-    if (slot.innerHTML) { slot.innerHTML = ""; return; }
-    slot.innerHTML = `<div class="popover">
-      <span class="sub">Contributed this year</span>
-      <input type="number" min="0" step="1" style="width:110px" value="${Math.round(Number(roth.contributed) || 0)}" aria-label="Roth contributed year to date">
+    if (slot.innerHTML) { slot.innerHTML = ""; rothEdit.setAttribute("aria-expanded", "false"); return; }
+    rothEdit.setAttribute("aria-expanded", "true");
+    slot.innerHTML = `<div class="popover" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <label class="sub" style="display:flex;gap:6px;align-items:center">Contributed
+        <input type="number" min="0" step="1" style="width:100px" id="roth-contrib" value="${Math.round(Number(roth.contributed) || 0)}" aria-label="Roth contributed for ${rothYear}"></label>
+      <label class="sub" style="display:flex;gap:6px;align-items:center">Limit
+        <input type="number" min="0" step="1" style="width:100px" id="roth-limit" value="${Math.round(Number(roth.limit) || 0)}" aria-label="Roth annual contribution limit"></label>
       <button type="button" class="btn primary small">Save</button>
       <span class="muted-note"></span>
     </div>`;
     slot.querySelector("button").addEventListener("click", async () => {
       const msg = slot.querySelector(".muted-note");
       try {
-        await api.put("/settings", { roth_contributed_ytd: Number(slot.querySelector("input").value) || 0 });
+        await api.put("/settings", {
+          roth_contributed_ytd: Number(slot.querySelector("#roth-contrib").value) || 0,
+          roth_contribution_limit: Number(slot.querySelector("#roth-limit").value) || 0,
+        });
         render(main);
       } catch (err) {
         msg.textContent = err.message || "Save failed";
@@ -579,6 +724,8 @@ export default async function render(main) {
         <td><span class="tick">${esc(h.ticker || MID)}</span><span class="nm">${esc(h.name || "")}${inNote}</span></td>
         <td>${(Number(h.quantity) || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}</td>
         <td>${fmtMoneyWhole(h.value)}</td>
+        ${retCell(h.r1d)}
+        ${retCell(h.r1m)}
         ${gainCell(h.gain, false)}
         ${gainCell(h.gainPct, true)}
         ${heldSinceCell(h.heldSince)}
@@ -618,7 +765,7 @@ export default async function render(main) {
           sub.className = "subrow";
           sub.innerHTML = `<td style="padding-left:18px">${esc(a.name)}</td>
             <td>${(Number(a.quantity) || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}</td>
-            <td>${fmtMoneyWhole(a.value)}</td><td></td><td></td><td></td><td></td>`;
+            <td>${fmtMoneyWhole(a.value)}</td><td colspan="${HOLDING_COLS.length - 3}"></td>`;
           anchor.after(sub);
           anchor = sub;
         });
@@ -771,13 +918,34 @@ export default async function render(main) {
       <p class="iv-foot">Yahoo data, cached daily. Not advice.</p>`;
   };
 
-  // -------------------------------------------------- S&P overlay (hero only)
+  // ------------------------------- S&P overlay (hero) + per-holding returns
   const fillPerf = (res) => {
     if (!res.ok) return; // overlay degrades silently; the hero still renders
     const d = res.v || {};
     if (Array.isArray(d.spy) && d.spy.length) {
       spySeries = d.spy;
       drawPf();
+    }
+    // Attach 1D/1M market returns to the holdings so the table can show and
+    // sort by them; tickers without a price series keep a placeholder cell.
+    const returns = d.returns && typeof d.returns === "object" ? d.returns : null;
+    if (returns && holdings.length) {
+      let any = false;
+      for (const h of holdings) {
+        const r = h.ticker ? returns[String(h.ticker).toUpperCase()] : null;
+        if (!r) continue;
+        h.r1d = r.r1d;
+        h.r1m = r.r1m;
+        any = true;
+      }
+      if (any) {
+        renderTable();
+        const foot = document.getElementById("holdings-foot");
+        if (foot) {
+          foot.textContent = "1D and 1M are market price returns from Yahoo, cached daily.";
+          foot.hidden = false;
+        }
+      }
     }
   };
 

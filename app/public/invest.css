@@ -92,6 +92,19 @@
 /* ---------- table return / placeholder cells ---------- */
 td.na { color: var(--muted); }
 
+/* ---------- portfolio checks: neutral "no data" pill ---------- */
+.pill.iv-none { color: var(--muted); background: rgba(105,119,110,.14); }
+
+/* ---------- account cards double as filter buttons ---------- */
+.iv-acct { font: inherit; color: inherit; text-align: left; width: 100%; }
+.iv-acct[aria-pressed="true"] { border-color: var(--accent); }
+
+/* ---------- collapsible card header (sector pulse) ---------- */
+.iv-cardhead { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+
+/* ---------- analysis staleness hint ---------- */
+.iv-stale { color: var(--warn); margin-left: 8px; }
+
 /* ---------- analysis card (Claude-written, stored in settings) ---------- */
 .iv-analysis .hl { font-size: 15px; font-weight: 700; letter-spacing: -.01em; margin-bottom: 8px; }
 .iv-analysis ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 5px; }
@@ -117,4 +130,8 @@ td.na { color: var(--muted); }
   .iv-sector { grid-template-columns: minmax(96px, 120px) 1fr 48px 56px; gap: 7px; }
   .iv-alloc { gap: 18px; }
   .iv-legend { min-width: 0; flex: 1; }
+  /* Ticker column stays put while the wide holdings table scrolls sideways. */
+  .iv-holdings th:first-child, .iv-holdings td:first-child {
+    position: sticky; left: 0; z-index: 1; background: var(--card);
+  }
 }

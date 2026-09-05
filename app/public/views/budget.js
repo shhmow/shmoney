@@ -55,7 +55,7 @@ function paceLine(row, { isCurrent, isFuture, day, daysLeft }) {
     }
     if (row.dailyLeft != null && daysLeft > 0 && row.pace !== "over") {
       const perDay = Number(row.dailyLeft);
-      bits.push(`${fmtMoney(perDay, { cents: perDay < 10 })}/day left`);
+      bits.push(`${perDay < 1 ? fmtMoney(perDay) : fmtMoneyWhole(perDay)}/day left`);
     }
   }
   const lm = row.lastMonthSpent != null ? Number(row.lastMonthSpent) : null;

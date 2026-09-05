@@ -90,7 +90,7 @@ function recentRow(t, acctMap) {
 }
 
 /* "This month" card body: income vs spending bars + savings line. */
-function thisMonthBody(cf, monthName) {
+function thisMonthBody(cf, monthName, st) {
   const head = `<div class="fts-head"><div class="label">This month ${MID} ${esc(monthName)}</div></div>`;
   if (!cf) {
     return head + `<p class="iv-err">Couldn't load cashflow ${MID} it'll be back on the next refresh.</p>`;
@@ -115,12 +115,16 @@ function thisMonthBody(cf, monthName) {
   const savedLine = saved >= 0
     ? `<div class="sub cfsaved">Saved <b class="pos">${fmtMoneyWhole(saved)}</b>${rate != null ? ` ${MID} ${rate}% of income` : ""}</div>`
     : `<div class="sub cfsaved"><span style="color:var(--warn)">${fmtMoneyWhole(Math.abs(saved))} more out than in</span> so far</div>`;
+  const p = st && st.pace;
+  const paceLine = p && p.dayOfMonth >= 2
+    ? `<div class="sub" style="margin-top:6px"><b style="color:var(--ink)">${fmtMoneyWhole(p.perDay)}</b>/day${p.prevPerDay ? ` (last month ${fmtMoneyWhole(p.prevPerDay)})` : ""} ${MID} on pace for <b style="color:var(--ink)">${fmtMoneyWhole(p.projected)}</b>${p.prevSpend ? ` vs ${fmtMoneyWhole(p.prevSpend)} last month` : ""} ${MID} <a href="#/cashflow" style="color:var(--ink-2)">details</a></div>`
+    : "";
   return `${head}
     <div class="cfbars">
       ${bar("Income", inc, "var(--c1)")}
       ${bar("Spending", sp, "var(--c2)")}
     </div>
-    ${savedLine}`;
+    ${savedLine}${paceLine}`;
 }
 
 /* Free to spend card body. Null/zero budget -> friendly unlock card, never a
@@ -149,15 +153,17 @@ function ftsBody(fts, monthName) {
 }
 
 export default async function render(main) {
-  let data, cashflow = null;
+  let data, cashflow = null, stats = null;
   try {
-    const [ovRes, cfRes] = await Promise.allSettled([
+    const [ovRes, cfRes, stRes] = await Promise.allSettled([
       api.get("/overview"),
       api.get("/cashflow?month=" + currentMonth()),
+      api.get("/stats?month=" + currentMonth()),
     ]);
     if (ovRes.status === "rejected") throw ovRes.reason;
     data = ovRes.value;
     cashflow = cfRes.status === "fulfilled" ? cfRes.value : null;
+    stats = stRes.status === "fulfilled" ? stRes.value : null;
   } catch (err) {
     main.innerHTML = `<div class="page">${errorCard(err)}</div>`;
     return;
@@ -211,7 +217,8 @@ export default async function render(main) {
 
     <div class="card">
       ${series.length >= 2
-        ? `<figure><svg id="nw-chart" viewBox="0 0 900 240" role="img" aria-label="Net worth over time"></svg></figure>`
+        ? `<figure><svg id="nw-chart" viewBox="0 0 900 240" role="img" aria-label="Net worth over time"></svg>
+           ${nw.fullFrom ? `<figcaption class="muted-note" style="margin-top:6px">Before ${esc(fmtDate(nw.fullFrom))} cash and card balances are rebuilt from transaction history; investments before linking are reconstructed from trades and prices.</figcaption>` : ""}</figure>`
         : emptyState({ title: "Net worth chart is warming up", body: "Daily balance snapshots build this chart. Check back after a couple of syncs.", glyph: "chart" })}
     </div>
 
@@ -220,7 +227,7 @@ export default async function render(main) {
     ${groupBlock("Investments", groups.investments, "investments")}
 
     <div class="grid two ov-bottom">
-      <div class="card">${thisMonthBody(cashflow, monthName)}</div>
+      <div class="card">${thisMonthBody(cashflow, monthName, stats)}</div>
       <div class="card">${ftsBody(fts, monthName)}</div>
     </div>
 
@@ -288,7 +295,9 @@ export default async function render(main) {
     // pace note
     const spent = Number(fts.spentTotal) || last;
     const ideal = (Number(fts.idealTotal) || Number(fts.budgetTotal) || 0) * today / days;
-    const note = spent <= ideal ? "slightly ahead of pace" : "running above pace";
+    const note = spent <= ideal
+      ? `${fmtMoneyWhole(spent)} spent by day ${today}; even pace would be ${fmtMoneyWhole(ideal)}`
+      : `${fmtMoneyWhole(spent)} spent by day ${today}, ${fmtMoneyWhole(spent - ideal)} over an even pace of ${fmtMoneyWhole(ideal)}`;
     const subEl = main.querySelector("#fts-sub");
     if (subEl) subEl.innerHTML = `after ${fmtMoneyWhole(upcoming)} of upcoming bills ${MID} ${note}`;
   }

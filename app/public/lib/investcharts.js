@@ -86,7 +86,7 @@ function parseDay(d) {
  * Handles any data size: 0 total points -> cleared svg (caller shows an empty
  * state); a 1-point series renders as a flat line with a dot.
  *
- * opts.onRangeSelect(fromDate, toDate): additive. When provided, a horizontal
+ * opts.yMin: optional axis floor (see below). opts.onRangeSelect(fromDate, toDate): additive. When provided, a horizontal
  * pointer drag on the chart draws a translucent selection band and, on
  * release, calls back with the selected 'YYYY-MM-DD' window (progressive
  * enhancement — pointer events cover mouse and touch; vertical touch scroll
@@ -120,6 +120,12 @@ export function lineChart(svg, seriesList, opts = {}) {
   if (tmin === tmax) { tmin -= 43200000; tmax += 43200000; }
   if (ymin === ymax) { ymin -= Math.max(1, Math.abs(ymin) * 0.02); ymax += Math.max(1, Math.abs(ymax) * 0.02); }
   else { const pad = (ymax - ymin) * 0.06; ymin -= pad; ymax += pad; }
+  // opts.yMin clamps the axis floor (portfolio value charts pass 0 so padding
+  // never produces a negative dollar label).
+  if (Number.isFinite(opts.yMin) && ymin < opts.yMin) {
+    ymin = opts.yMin;
+    if (ymax <= ymin) ymax = ymin + 1;
+  }
 
   const X = (t) => P.l + iw * (t - tmin) / (tmax - tmin);
   const Y = (v) => P.t + ih * (1 - (v - ymin) / (ymax - ymin));
@@ -273,8 +279,8 @@ export function donutChart(svg, segs, opts = {}) {
   let s = "";
   const segAttrs = (seg) =>
     `class="iv-seg${sel && sel !== seg.key ? " dim" : ""}${sel === seg.key ? " on" : ""}" tabindex="0" role="button" ` +
-    `aria-pressed="${sel === seg.key}" aria-label="${esc(seg.label)}: ${Math.round(seg.pct)} percent. Activate for details." ` +
-    `data-seg="${esc(seg.key)}" data-tt="${esc(seg.label)}" data-tv="${Math.round(seg.pct)}%"`;
+    `aria-pressed="${sel === seg.key}" aria-label="${esc(seg.label)}: ${fmtPct(seg.pct).replace("%", "")} percent. Activate for details." ` +
+    `data-seg="${esc(seg.key)}" data-tt="${esc(seg.label)}" data-tv="${fmtPct(seg.pct)}"`;
   if (clean.length === 1) {
     const one = clean[0];
     s += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${one.color}" stroke-width="${sw}" ${segAttrs(one)}/>`;
