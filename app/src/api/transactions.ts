@@ -62,6 +62,10 @@ transactions.get("/", async (c) => {
     }
   }
   if (p.flagged === "1") conds.push("t.flagged = 1");
+  if (p.direction === "in") conds.push("t.amount < 0");
+  if (p.direction === "out") conds.push("t.amount > 0");
+  if (p.transfer === "1") conds.push("t.is_transfer = 1");
+  if (p.transfer === "0") conds.push("t.is_transfer = 0");
   if (p.merchant) {
     conds.push("LOWER(COALESCE(t.merchant_name, t.name)) = LOWER(?)");
     binds.push(p.merchant);

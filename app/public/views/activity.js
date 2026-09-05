@@ -151,6 +151,15 @@ async function fillMonthSummary(a) {
     const arrow = delta == null ? "" : delta > 0 ? `<span style="color:var(--warn)">&#9650; ${delta}%</span>` : `<span style="color:var(--good)">&#9660; ${Math.abs(delta)}%</span>`;
     el.innerHTML = `Out this month <b style="color:var(--ink)">${fmtMoneyWhole(co)}</b> ${MID} last month ${fmtMoneyWhole(po)} ${arrow}
       ${MID} in this month <b style="color:var(--ink)">${fmtMoneyWhole(Number(c.sumIn) || 0)}</b>`;
+    if (a.type === "credit") {
+      // last payment received on the card (money in, flagged as a transfer)
+      const pay = await api.get(`/transactions?account_id=${encodeURIComponent(a.id)}&direction=in&transfer=1&limit=1`);
+      const last = pay && pay.transactions && pay.transactions[0];
+      if (last) {
+        el.innerHTML += ` ${MID} last payment <b style="color:var(--ink)">${fmtMoneyWhole(Math.abs(last.amount))}</b> on ${esc(fmtDate(last.date))}`
+          + ` <a class="linky" href="#/activity?account=${encodeURIComponent(a.id)}&category=${encodeURIComponent(last.category_id ?? "")}" style="font-size:12px">all payments</a>`;
+      }
+    }
   } catch { el.textContent = ""; }
 }
 
