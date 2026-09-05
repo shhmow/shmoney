@@ -362,3 +362,50 @@ figure svg { display: block; width: 100%; height: auto; }
   .src-row { grid-template-columns: 1fr 1fr; align-items: start; }
   .tax-hero .big .hero-num { font-size: 32px; }
 }
+
+/* ---------- brand tiles (issuer / network / merchant logos) ---------- */
+.brand-tile { display: inline-grid; place-items: center; border-radius: 9px; overflow: hidden; flex-shrink: 0;
+              vertical-align: middle; background: var(--raised); border: 1px solid var(--line); }
+.brand-tile svg { width: 100%; height: 100%; display: block; }
+.brand-tile.img { background: #fff; padding: 3px; }
+.brand-tile.img img { width: 100%; height: 100%; object-fit: contain; display: block; border-radius: 4px; }
+.brand-tile.mono-tile { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; font-weight: 600; letter-spacing: .04em; border: none; }
+.brand-tile.net { border-radius: 5px; }
+.brand-tile.tiny { width: 14px; height: 14px; border-radius: 4px; border: none; }
+.brand-tile.tiny.img { padding: 1px; }
+.acct-tag { display: inline-flex; align-items: center; gap: 5px; }
+.txn .dot { padding: 0; border: none; background: none; }
+
+/* account cards with logos + utilization */
+.acct-card { position: relative; }
+.acct-card .acct-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.acct-card .acct-top .acct-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acct-card.clickable { cursor: pointer; transition: border-color .12s, transform .12s; }
+.acct-card.clickable:hover { border-color: var(--muted); transform: translateY(-1px); }
+.acct-card .util { margin-top: 8px; }
+.acct-card .util .track { height: 5px; }
+.acct-card .util .sub { display: flex; justify-content: space-between; margin-top: 4px; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.util .fill.warn { background: var(--warn); } .util .fill.over { background: var(--crit); }
+
+/* detail sheet: bank section */
+.sheet .kv { display: grid; grid-template-columns: 96px 1fr; gap: 6px 10px; font-size: 13px; margin: 0 0 14px; }
+.sheet .kv .k { color: var(--muted); font-family: "IBM Plex Mono", monospace; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; padding-top: 2px; }
+.sheet .kv .v { color: var(--ink-2); word-break: break-word; font-variant-numeric: tabular-nums; }
+.sheet .bank { background: var(--raised); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; }
+.sheet .bank .bank-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.sheet .bank .bank-head b { font-size: 14px; }
+.sheet .bank .bank-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.sheet .bank .bank-actions a { text-decoration: none; }
+.sheet .related { margin-bottom: 14px; }
+.sheet .related .txn { padding: 7px 0; }
+.sheet .related .txn .m { font-size: 13px; }
+.flag-mark { color: var(--warn); font-size: 12px; margin-left: 4px; }
+.sheet-sec { margin: 6px 0 14px; }
+.sheet-sec > .label { margin-bottom: 6px; }
+.acct-chip { display: inline-flex; align-items: center; gap: 6px; }
+.acct-head { padding-bottom: 4px; }
+.toolbar .chip { align-self: center; }
+.inst-accts { flex-basis: 100%; display: flex; flex-direction: column; gap: 6px; margin-top: 6px; padding-left: 4px; }
+.inst-acct { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; background: var(--raised); flex-wrap: wrap; }
+.inst-acct .who { flex: 1; }
+.inst-acct input { padding: 5px 8px; font-size: 13px; }

@@ -50,6 +50,29 @@ api.route("/export", exportcsv);
 api.route("/webhooks", webhooks);
 api.route("/taxes", taxes);
 
+// GET /api/logo?domain=example.com — merchant favicon, proxied so the browser
+// never talks to a third party, cached at the edge for a week.
+api.get("/logo", async (c) => {
+  const domain = (c.req.query("domain") ?? "").toLowerCase().replace(/[^a-z0-9.-]/g, "");
+  if (!domain || !domain.includes(".")) return c.json({ error: "domain required" }, 400);
+  const upstream = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`;
+  const cacheKey = new Request(`https://shmoney-logo-cache/${domain}`);
+  const cache = (caches as unknown as { default: Cache }).default;
+  const hit = await cache.match(cacheKey).catch(() => undefined);
+  if (hit) return hit;
+  const res = await fetch(upstream, { cf: { cacheTtl: 604800 } } as RequestInit);
+  if (!res.ok) return c.json({ error: "no logo" }, 404);
+  const body = await res.arrayBuffer();
+  const out = new Response(body, {
+    headers: {
+      "content-type": res.headers.get("content-type") ?? "image/png",
+      "cache-control": "public, max-age=604800",
+    },
+  });
+  c.executionCtx.waitUntil(cache.put(cacheKey, out.clone()).catch(() => undefined));
+  return out;
+});
+
 // POST /api/sync — full sync, or a single item when body carries {item_id}.
 api.post("/sync", async (c) => {
   const body = (await readJson<{ item_id?: number }>(c)) ?? {};

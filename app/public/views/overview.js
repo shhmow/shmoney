@@ -2,11 +2,13 @@
 // free-to-spend pace, recent activity.
 import { api } from "../lib/api.js";
 import {
-  esc, fmtMoney, fmtMoneyWhole, fmtPct, catChip, txnAmount,
+  esc, fmtMoney, fmtMoneyWhole, fmtPct, catChip, txnAmount, fmtDate,
   emptyState, errorCard, parseDate, currentMonth, MID,
 } from "../lib/format.js";
 import { areaChart, paceChart } from "../lib/charts.js";
 import { rangeDelta, deltaBadge } from "../lib/investcharts.js";
+import { instTile, networkBadge, merchantTile, merchantLabel } from "../lib/brand.js";
+import { openDetail, ensureRefs } from "./activity.js";
 
 const RANGES = { "1M": 31, "3M": 92, "1Y": 366, "All": Infinity };
 const RANGE_LABELS = { "1M": "past month", "3M": "past 3 months", "1Y": "past year", "All": "all time" };
@@ -31,16 +33,34 @@ function chartLabels(points) {
   });
 }
 
+function utilization(a) {
+  const limit = Number(a.credit_limit || a.manual_limit || 0);
+  const bal = Math.abs(Number(a.current_balance || 0));
+  if (!(limit > 0)) return null;
+  const pct = bal / limit * 100;
+  return { limit, bal, pct, cls: pct >= 90 ? "over" : pct >= 30 ? "warn" : "" };
+}
+
 function acctCard(a, group) {
   const bal = Number(a.current_balance ?? a.balance ?? 0);
   const isCredit = group === "credit";
   const shown = isCredit ? -Math.abs(bal) : bal;
-  const sub = a.mask ? `${MID}${MID} ${esc(a.mask)}` : esc(a.subtype || a.type || "");
-  return `<div class="card acct-card">
-    <span class="acct-name">${esc(a.name)}</span>
+  const name = a.nickname || a.name;
+  const bits = [];
+  if (a.mask) bits.push(`${MID}${MID} ${esc(a.mask)}`);
+  if (a.institution_name) bits.push(esc(a.institution_name));
+  if (!a.mask && !a.institution_name) bits.push(esc(a.subtype || a.type || ""));
+  const u = isCredit ? utilization(a) : null;
+  const avail = isCredit && !u && a.available_balance != null ? `<span class="acct-sub">${fmtMoneyWhole(a.available_balance)} available</span>` : "";
+  const target = group === "investments" ? "#/invest" : `#/activity?account=${encodeURIComponent(a.id)}`;
+  return `<a class="card acct-card clickable" href="${target}" style="text-decoration:none;color:inherit" aria-label="${esc(name)}, ${esc(fmtMoney(shown))}">
+    <div class="acct-top">${instTile(a, { size: 30 })}<span class="acct-name" title="${esc(a.name)}">${esc(name)}</span>${networkBadge(a, 20)}</div>
     <span class="acct-bal${shown < 0 ? " neg" : ""}">${fmtMoney(shown)}</span>
-    <span class="acct-sub">${sub}</span>
-  </div>`;
+    <span class="acct-sub">${bits.join(` ${MID} `)}</span>
+    ${avail}
+    ${u ? `<div class="util"><div class="track"><div class="fill ${u.cls}" style="width:${Math.min(100, u.pct).toFixed(1)}%"></div></div>
+      <div class="sub"><span>${Math.round(u.pct)}% of ${fmtMoneyWhole(u.limit)}</span><span>${fmtMoneyWhole(Math.max(0, u.limit - u.bal))} left</span></div></div>` : ""}
+  </a>`;
 }
 
 function groupBlock(label, accts, group) {
@@ -54,15 +74,19 @@ function groupBlock(label, accts, group) {
 }
 
 /* recent activity rows: category-text style, no initials tiles (matches activity.js) */
-function recentRow(t) {
-  const merchant = t.merchant_name || t.name || "Unknown";
+function recentRow(t, acctMap) {
+  const merchant = merchantLabel(t);
   const amt = txnAmount(t.amount);
-  const acct = t.account_name ? `<span class="acct-tag">${esc(t.account_name)}</span>` : "";
-  return `<div class="txn txn-plain${t.pending ? " pending" : ""}">
-    <div class="who"><div class="m">${esc(merchant)}</div>
-      <div class="meta">${catChip(t.category_name, t.category_color)}${acct}</div></div>
+  const a = acctMap.get(String(t.account_id));
+  const acct = a || t.account_name
+    ? `<span class="acct-tag">${a ? instTile(a, { size: 14, cls: "tiny" }) : ""}<span>${esc(a ? (a.nickname || a.name) : t.account_name)}</span></span>` : "";
+  const when = `<span class="sub" style="font-size:11.5px">${esc(fmtDate(t.date))}</span>`;
+  return `<button type="button" class="txn txn-plain rowbtn${t.pending ? " pending" : ""}" data-txn="${esc(t.id)}" aria-label="${esc(merchant)}, ${esc(amt.text)}, ${esc(fmtDate(t.date))}">
+    <span class="dot">${merchantTile(t)}</span>
+    <div class="who"><div class="m" title="${esc(t.name || "")}">${esc(merchant)}${t.flagged ? ' <span class="flag-mark">&#9873;</span>' : ""}</div>
+      <div class="meta">${when}${catChip(t.category_name, t.category_color)}${acct}</div></div>
     <div class="${amt.cls}">${amt.text}</div>
-  </div>`;
+  </button>`;
 }
 
 /* "This month" card body: income vs spending bars + savings line. */
@@ -170,6 +194,8 @@ export default async function render(main) {
 
   const series = Array.isArray(nw.series) ? nw.series : [];
   const monthName = new Date().toLocaleDateString("en-US", { month: "long" });
+  const allAccts = [...(groups.cash || []), ...(groups.credit || []), ...(groups.investments || [])];
+  const acctMap = new Map(allAccts.map((a) => [String(a.id), a]));
 
   main.innerHTML = `<div class="page">
     <div class="pagehead">
@@ -199,12 +225,23 @@ export default async function render(main) {
     </div>
 
     <div class="card" style="margin-top:14px">
-      <div class="label" style="margin-bottom:6px">Recent activity</div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
+        <div class="label">Recent activity</div>
+        <a class="sub" href="#/activity" style="text-decoration:none">See all &#8594;</a>
+      </div>
       ${recent.length
-        ? recent.map(recentRow).join("")
+        ? recent.map((t) => recentRow(t, acctMap)).join("")
         : emptyState({ title: "No transactions yet", body: "Recent activity across all accounts shows up here after your first sync.", glyph: "list" })}
     </div>
   </div>`;
+
+  // recent rows open the same detail sheet as Activity
+  main.querySelectorAll("[data-txn]").forEach((row) => row.addEventListener("click", async () => {
+    const t = recent.find((x) => String(x.id) === String(row.dataset.txn));
+    if (!t) return;
+    await ensureRefs();
+    openDetail(t, () => render(main));
+  }));
 
   // ---------------------------------------------------------------- nw chart
   const drawNw = () => {

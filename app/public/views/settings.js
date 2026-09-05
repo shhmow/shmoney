@@ -1,7 +1,8 @@
 // Settings: institutions (link/relink/sync/delete), Plaid Link + OAuth resume,
 // categories manager, rules manager, settings fields, CSV export, logout.
 import { api } from "../lib/api.js";
-import { esc, fmtTimeAgo, catColor, errorCard, MID } from "../lib/format.js";
+import { esc, fmtTimeAgo, catColor, errorCard, fmtMoneyWhole, MID } from "../lib/format.js";
+import { instTile, networkBadge, brandOf, BRANDS } from "../lib/brand.js";
 
 const PLAID_SRC = "https://cdn.plaid.com/link/v2/stable/link-initialize.js";
 const TOKEN_KEY = "shmoney_link_token";
@@ -97,18 +98,22 @@ function accountCount(it) {
 }
 
 export default async function render(main) {
-  let items, categories, rules, settings;
+  let items, categories, rules, settings, accounts, links;
   try {
-    const [i, c, r, s] = await Promise.all([
+    const [i, c, r, s, a, l] = await Promise.all([
       api.get("/items"),
       api.get("/categories"),
       api.get("/rules"),
       api.get("/settings"),
+      api.get("/accounts").catch(() => []),
+      api.get("/items/links").catch(() => ({})),
     ]);
     items = Array.isArray(i) ? i : (i && i.items) || [];
     categories = Array.isArray(c) ? c : (c && c.categories) || [];
     rules = Array.isArray(r) ? r : (r && r.rules) || [];
     settings = (s && (s.settings || s)) || {};
+    accounts = Array.isArray(a) ? a : [];
+    links = l || {};
   } catch (err) {
     main.innerHTML = `<div class="page">${errorCard(err)}</div>`;
     return;
@@ -130,15 +135,32 @@ export default async function render(main) {
         </div>
       </div>
       <div id="inst-list">
-      ${items.length ? items.map((it) => `
+      ${items.length ? items.map((it) => {
+        const instAcct = { item_id: it.id, has_logo: it.has_logo, institution_name: it.institution_name, brand: it.links ? it.links.brand : null };
+        const accts = accounts.filter((a) => String(a.item_id) === String(it.id));
+        return `
         <div class="inst" data-item="${it.id}">
+          ${instTile(instAcct, { size: 36 })}
           <div class="who"><b>${esc(it.institution_name || "Institution")}</b>
-            <span class="sub">${accountCount(it)} account${accountCount(it) === 1 ? "" : "s"} ${MID} synced ${esc(fmtTimeAgo(it.last_synced_at))}</span></div>
+            <span class="sub">${accountCount(it)} account${accountCount(it) === 1 ? "" : "s"} ${MID} synced ${esc(fmtTimeAgo(it.last_synced_at))}${it.last_error ? ` ${MID} <span style="color:var(--crit)">${esc(it.last_error)}</span>` : ""}</span></div>
           ${statusPill(it.status)}
           <button type="button" class="btn small" data-sync="${it.id}">Sync now</button>
           <button type="button" class="btn small" data-relink="${it.id}">Relink</button>
-          <button type="button" class="btn small danger" data-del="${it.id}" data-name="${esc(it.institution_name || "this institution")}">Delete</button>
-        </div>`).join("")
+          <button type="button" class="rowmenu" data-del="${it.id}" data-name="${esc(it.institution_name || "this institution")}" aria-label="Remove ${esc(it.institution_name || "institution")}" title="Remove institution">&#215;</button>
+          <div class="inst-accts">
+            ${accts.map((a) => `<div class="inst-acct" data-acct="${esc(a.id)}">
+              ${instTile(a, { size: 22 })}
+              <div class="who" style="min-width:140px"><span style="font-size:13.5px;font-weight:600">${esc(a.nickname || a.name)}</span>${networkBadge(a, 16)}
+                <span class="sub" style="display:block">${a.nickname ? esc(a.name) + " " + MID + " " : ""}${a.mask ? MID + MID + " " + esc(a.mask) + " " + MID + " " : ""}${esc(a.subtype || a.type)}${a.hidden ? ` ${MID} hidden` : ""}</span></div>
+              <input class="nick" placeholder="Nickname" value="${esc(a.nickname || "")}" aria-label="Nickname for ${esc(a.name)}" style="width:150px">
+              ${a.type === "credit" ? `<input class="lim" type="number" inputmode="decimal" placeholder="${a.credit_limit ? "Limit " + fmtMoneyWhole(a.credit_limit) : "Credit limit"}" value="${a.manual_limit ? esc(a.manual_limit) : ""}" aria-label="Credit limit for ${esc(a.name)}" style="width:120px"${a.credit_limit ? " disabled title=\"Reported by the bank\"" : ""}>` : ""}
+              <button type="button" class="btn small acct-save">Save</button>
+              <button type="button" class="btn small acct-hide">${a.hidden ? "Show" : "Hide"}</button>
+              <span class="muted-note acct-msg"></span>
+            </div>`).join("")}
+          </div>
+        </div>`;
+      }).join("")
       : `<p class="sub" style="margin:10px 0 4px">Nothing linked yet. Connect your bank through Plaid to start syncing accounts, transactions, and holdings automatically.</p>`}
       </div>
       <div class="sub" style="margin-top:10px">${items.length} of ${MAX_CONNECTIONS} connections used</div>
@@ -193,6 +215,32 @@ export default async function render(main) {
           <button type="button" class="btn small" id="rule-add">Add</button>
         </div>
         <div class="muted-note" id="rule-msg" hidden style="margin-top:6px"></div>
+      </div>
+    </div>
+
+    <!-- bank links -->
+    ${Object.keys(links).length ? `<div class="card" style="margin-top:14px">
+      <div class="label" style="margin-bottom:4px">Bank links</div>
+      <p class="sub" style="margin:0 0 10px">Where "Open in bank" and "How to dispute" go from a transaction. Banks do not offer links to a single charge, so these open the logged-in activity page. Edit if your bank moves things.</p>
+      ${Object.values(links).map((l) => `<div class="inst" data-link="${esc(l.key)}">
+        ${BRANDS[l.brand] ? `<span class="brand-tile" style="width:30px;height:30px">${BRANDS[l.brand].svg}</span>` : ""}
+        <div class="who" style="min-width:110px"><b>${esc(l.label)}</b><span class="sub">${esc(l.phone || "")}</span></div>
+        <input class="l-activity" value="${esc(l.activity)}" aria-label="${esc(l.label)} activity URL" style="flex:2;min-width:180px" placeholder="Activity URL">
+        <input class="l-dispute" value="${esc(l.dispute)}" aria-label="${esc(l.label)} dispute URL" style="flex:2;min-width:180px" placeholder="Dispute URL">
+        <input class="l-phone" value="${esc(l.phone || "")}" aria-label="${esc(l.label)} phone" style="width:130px" placeholder="Phone">
+        <button type="button" class="btn small l-save">Save</button>
+        <span class="muted-note l-msg"></span>
+      </div>`).join("")}
+    </div>` : ""}
+
+    <!-- maintenance -->
+    <div class="card" style="margin-top:14px">
+      <div class="label" style="margin-bottom:4px">Maintenance</div>
+      <p class="sub" style="margin:0 0 10px">Re-run categorization over everything already synced: rules, bank-category fallback, refund repair, and recurring detection.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button type="button" class="btn small" id="recat">Re-apply rules &amp; fixes</button>
+        <button type="button" class="btn small" id="enrich">Fetch logos</button>
+        <span class="muted-note" id="maint-msg" hidden></span>
       </div>
     </div>
 
@@ -281,6 +329,54 @@ export default async function render(main) {
       say("#inst-msg", err.message || "Delete failed");
     }
   }));
+
+  /* ---- accounts: nickname / manual limit / hide ---- */
+  main.querySelectorAll(".inst-acct").forEach((row) => {
+    const id = row.dataset.acct;
+    const msg = row.querySelector(".acct-msg");
+    const flash = (t) => { msg.textContent = t; setTimeout(() => { msg.textContent = ""; }, 3000); };
+    row.querySelector(".acct-save").addEventListener("click", async () => {
+      const body = { nickname: row.querySelector(".nick").value.trim() || null };
+      const lim = row.querySelector(".lim");
+      if (lim && !lim.disabled) body.manual_limit = lim.value === "" ? null : Number(lim.value);
+      try { await api.patch(`/accounts/${encodeURIComponent(id)}`, body); flash("Saved"); }
+      catch (err) { flash(err.message || "Save failed"); }
+    });
+    row.querySelector(".acct-hide").addEventListener("click", async () => {
+      const a = accounts.find((x) => String(x.id) === String(id));
+      try { await api.patch(`/accounts/${encodeURIComponent(id)}`, { hidden: a && a.hidden ? 0 : 1 }); refreshView(); }
+      catch (err) { flash(err.message || "Failed"); }
+    });
+  });
+
+  /* ---- bank link overrides ---- */
+  main.querySelectorAll("[data-link]").forEach((row) => row.querySelector(".l-save").addEventListener("click", async () => {
+    const key = row.dataset.link;
+    const msg = row.querySelector(".l-msg");
+    let overrides = {};
+    try { overrides = settings.inst_links ? JSON.parse(settings.inst_links) : {}; } catch { overrides = {}; }
+    overrides[key] = {
+      activity: row.querySelector(".l-activity").value.trim(),
+      dispute: row.querySelector(".l-dispute").value.trim(),
+      phone: row.querySelector(".l-phone").value.trim(),
+    };
+    try {
+      settings = await api.put("/settings", { inst_links: JSON.stringify(overrides) });
+      msg.textContent = "Saved"; setTimeout(() => { msg.textContent = ""; }, 3000);
+    } catch (err) { msg.textContent = err.message || "Save failed"; }
+  }));
+
+  /* ---- maintenance ---- */
+  const maint = async (btn, path, body, done) => {
+    const orig = btn.textContent; btn.disabled = true; btn.textContent = "Working";
+    try { const r = await api.post(path, body); say("#maint-msg", done(r)); }
+    catch (err) { say("#maint-msg", err.message || "Failed"); }
+    btn.disabled = false; btn.textContent = orig;
+  };
+  main.querySelector("#recat").addEventListener("click", (e) =>
+    maint(e.currentTarget, "/transactions/recategorize", { retroactive: true }, (r) => `Done. ${r.rulesApplied} rows touched by rules.`));
+  main.querySelector("#enrich").addEventListener("click", (e) =>
+    maint(e.currentTarget, "/items/enrich", {}, (r) => `Institutions: ${r.institutions} ${MID} merchant logos: ${r.merchants.updated} of ${r.merchants.scanned}`));
 
   /* ---- categories ---- */
   main.querySelectorAll("[data-cat] .swatch").forEach((sw) => sw.addEventListener("click", async () => {

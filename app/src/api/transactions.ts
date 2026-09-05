@@ -13,6 +13,9 @@ import {
   hasOwn,
   TXN_SELECT,
   TXN_JOIN,
+  applyRules,
+  applyPlaidCategoryFallback,
+  detectRecurring,
   type Bind,
   type Txn,
 } from "./util";
@@ -45,9 +48,23 @@ transactions.get("/", async (c) => {
     }
   }
   if (p.q) {
-    conds.push("(t.name LIKE ? OR t.merchant_name LIKE ?)");
-    const like = `%${p.q}%`;
-    binds.push(like, like);
+    const qs = p.q.trim();
+    const asAmount = /^\$?-?\d+(\.\d{1,2})?$/.test(qs) ? Math.abs(parseFloat(qs.replace("$", ""))) : null;
+    if (asAmount !== null) {
+      // Numeric query: match the amount (either sign) or the descriptor text.
+      conds.push("(ABS(t.amount) BETWEEN ? AND ? OR t.name LIKE ? OR t.merchant_name LIKE ? OR a.mask = ?)");
+      const like = `%${qs}%`;
+      binds.push(asAmount - 0.005, asAmount + 0.005, like, like, qs);
+    } else {
+      conds.push("(t.name LIKE ? OR t.merchant_name LIKE ? OR t.notes LIKE ? OR a.name LIKE ?)");
+      const like = `%${qs}%`;
+      binds.push(like, like, like, like);
+    }
+  }
+  if (p.flagged === "1") conds.push("t.flagged = 1");
+  if (p.merchant) {
+    conds.push("LOWER(COALESCE(t.merchant_name, t.name)) = LOWER(?)");
+    binds.push(p.merchant);
   }
 
   const where = conds.length > 0 ? " WHERE " + conds.join(" AND ") : "";
@@ -61,12 +78,51 @@ transactions.get("/", async (c) => {
     limit,
     offset,
   );
-  const tot = await first<{ n: number }>(
+  const tot = await first<{ n: number; out: number | null; inn: number | null }>(
     c.env,
-    `SELECT COUNT(*) AS n ${TXN_JOIN}${where}`,
+    `SELECT COUNT(*) AS n,
+            SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) AS out,
+            SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS inn
+     ${TXN_JOIN}${where}`,
     ...binds,
   );
-  return c.json({ transactions: rows, total: num(tot ? tot.n : 0) });
+  return c.json({
+    transactions: rows,
+    total: num(tot ? tot.n : 0),
+    sumOut: Math.round(num(tot ? tot.out : 0) * 100) / 100,
+    sumIn: Math.round(num(tot ? tot.inn : 0) * 100) / 100,
+  });
+});
+
+// Re-run the classification pipeline over existing rows without a Plaid sync:
+// rules (retroactive), Plaid-category fallback + refund repair, recurring.
+transactions.post("/recategorize", async (c) => {
+  const body = (await readJson<{ retroactive?: boolean }>(c)) ?? {};
+  const rules = await applyRules(c.env, { retroactive: body.retroactive === true });
+  await applyPlaidCategoryFallback(c.env);
+  await detectRecurring(c.env);
+  return c.json({ ok: true, rulesApplied: rules });
+});
+
+// Other charges from the same merchant (for "is this a repeat?" checks in the sheet).
+transactions.get("/:id/related", async (c) => {
+  const id = c.req.param("id");
+  const t = await first<Txn>(c.env, `${TXN_SELECT} WHERE t.id = ?`, id);
+  if (!t) return notFound(c, "transaction not found");
+  const key = (t.merchant_name ?? t.name).toLowerCase();
+  const rows = await q<Txn>(
+    c.env,
+    `${TXN_SELECT} WHERE t.id <> ? AND LOWER(COALESCE(t.merchant_name, t.name)) = ?
+     ORDER BY t.date DESC, t.id DESC LIMIT 12`,
+    id, key,
+  );
+  const agg = await first<{ n: number; total: number | null; first: string | null }>(
+    c.env,
+    `SELECT COUNT(*) AS n, SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) AS total, MIN(date) AS first
+     FROM transactions WHERE LOWER(COALESCE(merchant_name, name)) = ?`,
+    key,
+  );
+  return c.json({ transactions: rows, count: num(agg?.n), total: Math.round(num(agg?.total) * 100) / 100, first: agg?.first ?? null });
 });
 
 transactions.patch("/:id", async (c) => {
@@ -77,6 +133,7 @@ transactions.patch("/:id", async (c) => {
     is_transfer?: boolean | number;
     notes?: string | null;
     biz_category_id?: number | null;
+    flagged?: boolean | number;
   }>(c);
   if (!body) return bad(c, "invalid JSON body");
 
@@ -113,6 +170,10 @@ transactions.patch("/:id", async (c) => {
   if (hasOwn(body, "is_transfer")) {
     sets.push("is_transfer = ?");
     binds.push(body.is_transfer ? 1 : 0);
+  }
+  if (hasOwn(body, "flagged")) {
+    sets.push("flagged = ?");
+    binds.push(body.flagged ? 1 : 0);
   }
   if (hasOwn(body, "notes")) {
     sets.push("notes = ?");

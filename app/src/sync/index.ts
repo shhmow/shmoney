@@ -515,10 +515,33 @@ const PLAID_CATEGORY_MAP: ReadonlyArray<readonly [string, string]> = [
   ["LOAN_PAYMENTS", "Transfers"],
 ];
 
-async function applyPlaidCategoryFallback(env: Env): Promise<void> {
+export async function applyPlaidCategoryFallback(env: Env): Promise<void> {
   const categories = await q<{ id: number; name: string }>(env, "SELECT id, name FROM categories");
   const byName = new Map(categories.map((c) => [c.name, c.id]));
   const stmts: PreparedStatement[] = [];
+  // A credit to a credit card is a refund/return or a statement credit, never
+  // income: file it under the merchant's usual category (latest purchase from
+  // the same merchant), else Other. Also repairs rows Plaid had tagged INCOME.
+  const otherId = byName.get("Other");
+  if (otherId !== undefined) {
+    stmts.push(stmt(
+      env,
+      `UPDATE transactions SET category_id = COALESCE(
+         (SELECT t2.category_id FROM transactions t2
+          WHERE t2.amount > 0 AND t2.category_id IS NOT NULL
+            AND LOWER(COALESCE(t2.merchant_name, t2.name)) = LOWER(COALESCE(transactions.merchant_name, transactions.name))
+          ORDER BY t2.date DESC LIMIT 1),
+         ?1), is_transfer = 0
+       WHERE amount < 0 AND is_transfer = 0
+         AND account_id IN (SELECT id FROM accounts WHERE type = 'credit')
+         AND (category_id IS NULL AND plaid_category LIKE 'INCOME%'
+              OR category_id IN (SELECT id FROM categories WHERE kind = 'income'))
+         AND NOT EXISTS (SELECT 1 FROM rules r JOIN categories rc ON rc.id = r.category_id
+                         WHERE rc.kind = 'income'
+                           AND instr(LOWER(COALESCE(transactions.merchant_name, '') || ' ' || transactions.name), LOWER(r.match_value)) > 0)`,
+      otherId,
+    ));
+  }
   for (const [prefix, name] of PLAID_CATEGORY_MAP) {
     const categoryId = byName.get(name);
     if (categoryId === undefined) continue;
@@ -528,7 +551,6 @@ async function applyPlaidCategoryFallback(env: Env): Promise<void> {
       categoryId, prefix,
     ));
   }
-  const otherId = byName.get("Other");
   if (otherId !== undefined) {
     stmts.push(stmt(
       env,
