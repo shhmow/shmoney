@@ -44,51 +44,90 @@ budgets.get("/", async (c) => {
   const month = monthParam(c.req.query("month"));
   if (!month) return bad(c, "month must be YYYY-MM");
   const { day, dim } = elapsedDays(month);
+  const isCurrent = month === currentMonth();
+  const daysLeft = Math.max(0, dim - day);
 
-  const rows = await q<{ category_id: number; name: string; color: string | null; budget: number | null }>(
+  const rows = await q<{
+    category_id: number; name: string; color: string | null; budget: number | null;
+    rollover: number | null; preset_type: string | null; preset_value: number | null;
+  }>(
     c.env,
-    `SELECT cat.id AS category_id, cat.name AS name, cat.color AS color, b.amount AS budget
+    `SELECT cat.id AS category_id, cat.name AS name, cat.color AS color, b.amount AS budget,
+            bs.rollover AS rollover, bs.preset_type AS preset_type, bs.preset_value AS preset_value
      FROM categories cat
      LEFT JOIN budgets b ON b.category_id = cat.id AND b.month = ?
+     LEFT JOIN budget_settings bs ON bs.category_id = cat.id
      WHERE cat.kind = 'expense' AND cat.hidden = 0
      ORDER BY cat.sort, cat.name`,
     month,
   );
   const spent = await monthSpendByCategory(c.env, month);
+  const lastSpent = await monthSpendByCategory(c.env, addMonths(month, -1));
 
   let onCount = 0;
   let budgetedCount = 0;
+  let unbudgetedCount = 0;
+  let unbudgetedSpent = 0;
   const out = rows.map((r) => {
     const budget = round2(num(r.budget));
     const sp = spent.get(r.category_id) ?? 0;
     const projected = day >= 7 && day < dim ? round2((sp / Math.max(day, 1)) * dim) : sp;
+    const available = round2(budget - sp);
     let pace: Pace = "ok";
     if (budget > 0) {
       if (sp > budget) pace = "over";
       else if (day >= 7 && projected > budget) pace = "projected_over";
       budgetedCount++;
       if (pace === "ok") onCount++;
+    } else if (sp > 0) {
+      unbudgetedCount++;
+      unbudgetedSpent += sp;
     }
+    // Pace helpers for the current month only: dollars per remaining day and,
+    // at the current burn rate, how many days until the budget is used up.
+    const burn = isCurrent && day >= 7 && sp > 0 ? sp / day : 0;
+    const dailyLeft = isCurrent && budget > 0 && daysLeft > 0 && available > 0 ? round2(available / daysLeft) : null;
+    const exhaustDays = isCurrent && budget > 0 && burn > 0 && available > 0 ? Math.round(available / burn) : null;
+    const lm = lastSpent.get(r.category_id) ?? 0;
     return {
       category_id: r.category_id,
       name: r.name,
       color: r.color,
       budget,
       spent: sp,
-      available: round2(budget - sp),
+      available,
       pace,
       projected,
+      dailyLeft,
+      exhaustDays,
+      lastMonthSpent: lm,
+      lastMonthDeltaPct: lm > 0 ? Math.round(((sp - lm) / lm) * 100) : null,
+      rollover: num(r.rollover) ? 1 : 0,
+      preset_type: r.preset_type,
+      preset_value: r.preset_value,
     };
   });
 
   const totalBudget = round2(out.reduce((s, r) => s + r.budget, 0));
   const totalSpent = round2(out.reduce((s, r) => s + r.spent, 0));
+  // "Spent of budgeted" only counts categories that have a budget; spend in
+  // unbudgeted categories is reported separately so the ratio stays honest.
+  const spentBudgeted = round2(out.reduce((s, r) => s + (r.budget > 0 ? r.spent : 0), 0));
 
   return c.json({
     month,
+    day,
+    daysInMonth: dim,
+    daysLeft,
     rows: out,
-    totals: { budget: totalBudget, spent: totalSpent, available: round2(totalBudget - totalSpent) },
-    onTrack: { on: onCount, of: budgetedCount },
+    totals: {
+      budget: totalBudget,
+      spent: totalSpent,
+      spentBudgeted,
+      unbudgetedSpent: round2(unbudgetedSpent),
+      available: round2(totalBudget - spentBudgeted),
+    },
+    onTrack: { on: onCount, of: budgetedCount, unbudgeted: unbudgetedCount, unbudgetedSpent: round2(unbudgetedSpent) },
   });
 });
 
@@ -226,11 +265,20 @@ budgets.post("/:month/rebalance", async (c) => {
   const total = current.reduce((s, r) => s + num(r.amount), 0);
   const avg = await avg3moSpend(c.env, month);
   const weightSum = current.reduce((s, r) => s + (avg.get(r.category_id) ?? 0), 0);
+  // Spend so far this month floors each proposal (a budget below what is
+  // already spent would be breached the moment it is applied). Only months
+  // that have started have spend to floor against.
+  const floorSpend = month <= currentMonth() ? await monthSpendByCategory(c.env, month) : new Map<number, number>();
 
   const rows = current.map((r) => {
     const weight = weightSum > 0 ? (avg.get(r.category_id) ?? 0) / weightSum : 1 / current.length;
     const proposed = Math.round((total * weight) / 5) * 5; // nearest $5
-    return { category_id: r.category_id, name: r.name, current: round2(num(r.amount)), proposed, delta: 0 };
+    const spent = floorSpend.get(r.category_id) ?? 0;
+    const floor = Math.ceil(spent / 5) * 5;
+    return {
+      category_id: r.category_id, name: r.name, current: round2(num(r.amount)),
+      proposed, delta: 0, spent, floor, floored: false, over: false,
+    };
   });
   // Preserve the total: put rounding drift on the largest proposed row.
   const drift = round2(total - rows.reduce((s, r) => s + r.proposed, 0));
@@ -239,7 +287,32 @@ budgets.post("/:month/rebalance", async (c) => {
     for (const r of rows) if (r.proposed > largest.proposed) largest = r;
     largest.proposed = round2(largest.proposed + drift);
   }
-  for (const r of rows) r.delta = round2(r.proposed - r.current);
+  // Raise breached proposals to their floor, then take the excess back from
+  // rows with slack ($5 steps, most slack first) so the total holds when it can.
+  for (const r of rows) {
+    if (r.proposed < r.floor) {
+      r.proposed = r.floor;
+      r.floored = true;
+    }
+  }
+  let excess = round2(rows.reduce((s, r) => s + r.proposed, 0) - total);
+  let guard = 0;
+  while (excess > 0 && guard++ < 1000) {
+    let donor: (typeof rows)[number] | null = null;
+    for (const r of rows) {
+      const slack = r.proposed - r.floor;
+      if (slack > 0 && (donor === null || slack > donor.proposed - donor.floor)) donor = r;
+    }
+    if (donor === null) break;
+    const take = Math.min(excess, 5, donor.proposed - donor.floor);
+    donor.proposed = round2(donor.proposed - take);
+    excess = round2(excess - take);
+  }
+  for (const r of rows) {
+    r.delta = round2(r.proposed - r.current);
+    r.over = r.proposed < r.spent;
+  }
+  const newTotal = round2(rows.reduce((s, r) => s + r.proposed, 0));
 
   if (body.apply === true) {
     for (const r of rows) {
@@ -268,7 +341,10 @@ budgets.post("/:month/rebalance", async (c) => {
     }
   }
 
-  return c.json({ month, total: round2(total), rows, applied: body.apply === true, scope });
+  return c.json({
+    month, total: newTotal, previousTotal: round2(total), totalChanged: newTotal !== round2(total),
+    rows, applied: body.apply === true, scope,
+  });
 });
 
 budgets.post("/:month/rollover", async (c) => {

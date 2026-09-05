@@ -157,12 +157,10 @@ cashflow.get("/", async (c) => {
     const keep = sankeySpend.slice(0, MAX_SANKEY_SPEND_NODES - 1);
     const rest = sankeySpend.slice(MAX_SANKEY_SPEND_NODES - 1);
     const restTotal = round2(rest.reduce((s, r) => s + r.amount, 0));
-    // Merge into an existing "Other" bucket if one survived the cut.
-    const other = keep.find((r) => r.label === "Other");
-    if (other) {
-      other.amount = round2(other.amount + restTotal);
-    } else {
-      keep.push({ id: "cat:grouped-other", label: "Other", amount: restTotal, color: null });
+    // Always a distinct node: folding into the real "Other" category made the
+    // node total disagree with that category's own drill-down.
+    {
+      keep.push({ id: "cat:grouped-other", label: `${rest.length} more categories`, amount: restTotal, color: null });
     }
     sankeySpend = keep;
   }

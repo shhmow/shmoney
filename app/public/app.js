@@ -1,5 +1,5 @@
 // shmoney SPA shell: nav, hash router, service worker, Plaid OAuth resume.
-import "./lib/api.js";
+import { api } from "./lib/api.js";
 import { resumeOauthIfNeeded } from "./views/settings.js";
 
 const PAGES = [
@@ -34,11 +34,26 @@ function buildNav() {
   side.innerHTML = `<div class="wordmark">shmoney<span>.</span></div>` +
     PAGES.map(([id, label, d]) =>
       `<button type="button" class="navbtn" data-nav="${id}">${icon(d)}${label}</button>`).join("");
-  // Mobile bottom bar: all tabs, horizontally scrollable
-  bottom.innerHTML = PAGES.map(([id, label, d]) =>
-    `<button type="button" class="navbtn" data-nav="${id}" style="flex:1">${icon(d)}${label}</button>`).join("");
+  // Mobile bottom bar: four primary tabs + "More" (the rest in a sheet), so
+  // nothing hides off-screen in a scrolling strip.
+  const primary = ["overview", "activity", "budget", "invest"];
+  const rest = PAGES.filter(([id]) => !primary.includes(id));
+  bottom.innerHTML = PAGES.filter(([id]) => primary.includes(id)).map(([id, label, d]) =>
+    `<button type="button" class="navbtn" data-nav="${id}">${icon(d)}${label}</button>`).join("") +
+    `<button type="button" class="navbtn" id="nav-more" aria-haspopup="true" aria-expanded="false">${icon("M5 12h.01M12 12h.01M19 12h.01")}More</button>
+     <div class="more-sheet" id="more-sheet" hidden>
+       ${rest.map(([id, label, d]) => `<button type="button" class="navbtn" data-nav="${id}">${icon(d)}${label}</button>`).join("")}
+     </div>`;
+  const more = document.getElementById("nav-more");
+  const sheet = document.getElementById("more-sheet");
+  const closeMore = () => { sheet.hidden = true; more.setAttribute("aria-expanded", "false"); };
+  more.addEventListener("click", () => {
+    sheet.hidden = !sheet.hidden;
+    more.setAttribute("aria-expanded", String(!sheet.hidden));
+  });
+  document.addEventListener("click", (e) => { if (!sheet.hidden && !bottom.contains(e.target)) closeMore(); });
   document.querySelectorAll("[data-nav]").forEach((b) =>
-    b.addEventListener("click", () => { location.hash = "#/" + b.dataset.nav; }));
+    b.addEventListener("click", () => { closeMore(); location.hash = "#/" + b.dataset.nav; }));
 }
 
 function currentRoute() {
@@ -61,6 +76,8 @@ async function renderRoute() {
   const token = ++renderToken;
   document.querySelectorAll("[data-nav]").forEach((x) =>
     x.classList.toggle("active", x.dataset.nav === name));
+  const moreBtn = document.getElementById("nav-more");
+  if (moreBtn) moreBtn.classList.toggle("active", !["overview", "activity", "budget", "invest"].includes(name));
   // close any overlay left open by the previous view (slide-over, modal)
   document.querySelectorAll("#txn-sheet-wrap, .modal-backdrop").forEach((el) => el.remove());
   const main = document.getElementById("view");
@@ -89,6 +106,9 @@ function registerSW() {
 async function boot() {
   buildNav();
   registerSW();
+  // One auth probe up front: a signed-out user sees the login overlay once
+  // instead of every view request failing with its own 401.
+  try { await api.get("/auth/check"); } catch { /* login overlay already shown by api.js */ }
   window.addEventListener("hashchange", renderRoute);
   window.addEventListener("shmoney:refresh", renderRoute);
   // Plaid OAuth redirect resume (must run before first route render)

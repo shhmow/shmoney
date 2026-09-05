@@ -49,6 +49,10 @@ app.post("/api/auth/login", async (c) => {
   return c.json({ ok: true });
 });
 
+// Auth-gated no-op: the SPA probes this once on boot so a signed-out user
+// gets a single 401 (and the login overlay) instead of one per view request.
+app.get("/api/auth/check", (c) => c.json({ ok: true }));
+
 // Public, dataless: which worker build is actually serving traffic.
 app.get("/api/version", (c) => c.json({ build: BUILD_TAG }));
 

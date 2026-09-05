@@ -35,6 +35,8 @@ interface AggHolding {
   accounts: { account_id: string; name: string; quantity: number; value: number }[];
 }
 
+const ROTH_LIMIT_DEFAULT = 7500;
+
 const TYPE_LABEL: Record<string, string> = {
   stocks: "Stocks",
   mutual_funds: "Mutual funds",
@@ -44,7 +46,8 @@ const TYPE_LABEL: Record<string, string> = {
   other: "Other",
 };
 
-type CheckStatus = "pass" | "check";
+// "none" = the check has no data to evaluate yet (rendered neutral, not a pass).
+type CheckStatus = "pass" | "check" | "none";
 
 function allocClass(stype: string | null): "stocks" | "bonds" | "cash" | "other" {
   const t = (stype ?? "").toLowerCase();
@@ -234,7 +237,7 @@ investments.get("/", async (c) => {
     id: "fees",
     label: "Fee drag",
     detail: "No expense ratio data from Plaid. Review fund fees manually.",
-    status: "pass",
+    status: "none",
   });
   const top = globalHoldings[0];
   if (top && top.weight > 0.4) {
@@ -278,24 +281,35 @@ investments.get("/", async (c) => {
       id: "emergency_fund",
       label: "Emergency fund",
       detail: "Not enough spending history yet.",
-      status: "pass",
+      status: "none",
     });
   }
   checks.push({
     id: "drift",
     label: "Allocation drift",
     detail: "No target allocation set.",
-    status: "pass",
+    status: "none",
   });
 
   // Retirement from settings (always global).
   const settings = await getSettings(env);
-  const rothLimit = num(settings["roth_contribution_limit"], 7000);
+  // 2026 IRS limit (under 50) is $7,500. A missing value, or the old $7,000
+  // default that earlier builds seeded, both resolve to the current limit;
+  // anything else is the user's own override.
+  const rothLimitRaw = num(settings["roth_contribution_limit"], 0);
+  const rothLimit = rothLimitRaw > 0 && rothLimitRaw !== 7000 ? rothLimitRaw : ROTH_LIMIT_DEFAULT;
   const rothContributed = num(settings["roth_contributed_ytd"], 0);
+  // Contributions for tax year Y are accepted until Apr 15 of Y+1.
+  const taxYear = new Date().getUTCFullYear();
+  const deadline = `${taxYear + 1}-04-15`;
+  const daysToDeadline = Math.max(0, Math.ceil((Date.parse(deadline + "T00:00:00Z") - Date.now()) / 86400_000));
   const roth = {
     limit: round2(rothLimit),
     contributed: round2(rothContributed),
     room: round2(Math.max(0, rothLimit - rothContributed)),
+    taxYear,
+    deadline,
+    daysToDeadline,
   };
 
   let inheritedIra: {
@@ -304,6 +318,12 @@ investments.get("/", async (c) => {
     of: number;
     suggested: number;
     taken: number;
+    accountId: string | null;
+    accountName: string | null;
+    currentValue: number | null;
+    basis: "current" | "starting";
+    remainingYears: number;
+    deadline: string;
     note: string;
   } | null = null;
   const yodRaw = settings["inherited_ira_year_of_death"] ?? "";
@@ -311,8 +331,21 @@ investments.get("/", async (c) => {
   if (yodRaw.trim() !== "" && yod > 1900) {
     const currentYear = new Date().getUTCFullYear();
     const year = Math.min(10, Math.max(1, currentYear - yod));
+    // The 10-year window closes Dec 31 of the tenth year after death.
+    const deadline = `${yod + 10}-12-31`;
+    const remainingYears = Math.max(1, yod + 10 - currentYear + 1);
+    // Suggested draw = what is actually in the inherited account today, spread
+    // over the years left in the window. The account is the non-Roth IRA whose
+    // name carries Fidelity's "BDA" (beneficiary distribution account) marker,
+    // else the only non-Roth IRA. Falls back to the starting balance from
+    // Settings when the account is unknown or reports no value.
+    const iraAccts = accounts.filter((a) => (a.subtype ?? "").toLowerCase() === "ira");
+    const iraAcct = iraAccts.find((a) => /\bBDA\b/i.test(a.name)) ?? (iraAccts.length === 1 ? iraAccts[0] : null) ?? null;
+    const currentValue = iraAcct ? round2(iraAcct.value) : null;
     const starting = num(settings["inherited_ira_starting_balance"], 0);
-    const suggested = round2(starting / (11 - year));
+    const basis: "current" | "starting" = currentValue != null && currentValue > 0 ? "current" : "starting";
+    const base = basis === "current" ? (currentValue as number) : starting;
+    const suggested = round2(base / remainingYears);
     const taken = round2(num(settings["inherited_ira_taken_ytd"], 0));
     inheritedIra = {
       yearOfDeath: yod,
@@ -320,9 +353,40 @@ investments.get("/", async (c) => {
       of: 10,
       suggested,
       taken,
-      note: "Straight line estimate over the 10 year window.",
+      accountId: iraAcct ? iraAcct.id : null,
+      accountName: iraAcct ? iraAcct.name : null,
+      currentValue,
+      basis,
+      remainingYears,
+      deadline,
+      note: "Straight line over the years left in the 10 year window. Annual RMDs may also apply under post-2024 rules.",
     };
   }
+
+  // External cash flows in and out of the (scoped) investment accounts, so the
+  // hero can split a window's value change into contributions vs market gain.
+  // Plaid signs cash rows from the account's view: deposits are negative.
+  // Fund distributions land as 'deposit' rows too; those are not new money.
+  const flowBinds: string[] = [];
+  let flowFilter = "";
+  if (accountId) {
+    flowFilter = " AND t.account_id = ?";
+    flowBinds.push(accountId);
+  }
+  const flowRows = await q<{ date: string; amount: number | null }>(
+    env,
+    `SELECT t.date, SUM(-t.amount) AS amount
+     FROM investment_transactions t JOIN accounts a ON a.id = t.account_id
+     WHERE a.type = 'investment' AND a.hidden = 0
+       AND t.type IN ('cash', 'transfer')
+       AND t.subtype IN ('contribution', 'deposit', 'withdrawal', 'transfer')
+       AND (t.name IS NULL OR t.name NOT LIKE '%DISTRIBUTION%')${flowFilter}
+     GROUP BY t.date ORDER BY t.date`,
+    ...flowBinds,
+  );
+  const contributions = flowRows
+    .map((r) => ({ date: r.date, amount: round2(num(r.amount)) }))
+    .filter((r) => r.amount !== 0);
 
   // Claude-written analysis, stored in settings as a JSON string under
   // `invest_analysis` (written via PUT /api/settings). Null when absent or
@@ -354,6 +418,7 @@ investments.get("/", async (c) => {
     allocation,
     allocationByType,
     checks,
+    contributions,
     retirement: { roth, inheritedIra },
   });
 });

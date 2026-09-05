@@ -20,6 +20,7 @@ import { settings } from "./settings";
 import { exportcsv } from "./exportcsv";
 import { webhooks } from "./webhooks";
 import { taxes } from "./taxes";
+import { stats } from "./stats";
 
 export const api = new Hono<{ Bindings: Env }>();
 
@@ -49,6 +50,7 @@ api.route("/settings", settings);
 api.route("/export", exportcsv);
 api.route("/webhooks", webhooks);
 api.route("/taxes", taxes);
+api.route("/stats", stats);
 
 // GET /api/logo?domain=example.com — merchant favicon, proxied so the browser
 // never talks to a third party, cached at the edge for a week.

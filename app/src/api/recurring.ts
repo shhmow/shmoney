@@ -4,7 +4,7 @@
 // POST /api/recurring/candidates/dismiss (hide a candidate).
 import { Hono } from "hono";
 import type { Env } from "../types";
-import { q, first, run, num, bad, notFound, readJson, hasOwn, daysAgoStr, todayStr, type Bind } from "./util";
+import { q, first, run, num, bad, notFound, readJson, hasOwn, daysAgoStr, todayStr, isDate, type Bind } from "./util";
 import { addDays } from "../lib/format";
 import { detectRecurring, manualRecurringMerchants, MANUAL_RECURRING_KEY } from "../sync";
 
@@ -19,12 +19,51 @@ interface RecurringRow {
   active: number;
   category_name: string | null;
   category_color: string | null;
+  // Most recent charge for this merchant (which account/card it hits).
+  account_id: string | null;
+  account_name: string | null;
+  account_mask: string | null;
+  last_amount: number | null;
+  last_txn_date: string | null;
 }
 
+// `lt` is the merchant's latest outflow; it tells us which account the
+// charge lands on and what it actually cost last time.
 const RECURRING_SELECT = `
   SELECT r.id, r.merchant, r.category_id, r.cadence, r.avg_amount, r.last_date, r.next_date, r.active,
-         c.name AS category_name, c.color AS category_color
-  FROM recurring r LEFT JOIN categories c ON c.id = r.category_id`;
+         c.name AS category_name, c.color AS category_color,
+         lt.account_id AS account_id, a.name AS account_name, a.mask AS account_mask,
+         lt.amount AS last_amount, lt.date AS last_txn_date
+  FROM recurring r
+  LEFT JOIN categories c ON c.id = r.category_id
+  LEFT JOIN transactions lt ON lt.id = (
+    SELECT t.id FROM transactions t
+    WHERE COALESCE(t.merchant_name, t.name) = r.merchant AND t.amount > 0 AND t.excluded = 0
+    ORDER BY t.date DESC, t.id DESC LIMIT 1)
+  LEFT JOIN accounts a ON a.id = lt.account_id`;
+
+// A weekly/monthly item is "stale" (probably stopped) when its expected next
+// charge is more than 45 days overdue. Computed, not stored: the row and its
+// history stay put and the UI groups it under "Stopped?".
+const STALE_DAYS = 45;
+
+function isStale(r: RecurringRow): boolean {
+  if (r.cadence !== "monthly" && r.cadence !== "weekly") return false;
+  const cutoff = daysAgoStr(STALE_DAYS);
+  const last = [r.last_date, r.last_txn_date].filter((d): d is string => !!d).sort().pop() ?? null;
+  const expected = last ? addDays(last, CADENCE_DAYS[r.cadence] ?? 30) : null;
+  if (expected && expected < cutoff) return true;
+  return !!r.next_date && r.next_date < cutoff;
+}
+
+async function listRecurring(env: Env): Promise<(RecurringRow & { manual: number; stale: number })[]> {
+  const rows = await q<RecurringRow>(
+    env,
+    `${RECURRING_SELECT} ORDER BY (r.next_date IS NULL), r.next_date, r.merchant`,
+  );
+  const manual = new Set(await manualRecurringMerchants(env));
+  return rows.map((r) => ({ ...r, manual: manual.has(r.merchant) ? 1 : 0, stale: isStale(r) ? 1 : 0 }));
+}
 
 // Settings key holding a JSON array of candidate merchant names the user
 // dismissed from the "Possible subscriptions" list (no schema change needed).
@@ -59,12 +98,7 @@ function daysBetween(a: string, b: string): number {
 export const recurring = new Hono<{ Bindings: Env }>();
 
 recurring.get("/", async (c) => {
-  const rows = await q<RecurringRow>(
-    c.env,
-    `${RECURRING_SELECT} ORDER BY (r.next_date IS NULL), r.next_date, r.merchant`,
-  );
-  const manual = new Set(await manualRecurringMerchants(c.env));
-  return c.json(rows.map((r) => ({ ...r, manual: manual.has(r.merchant) ? 1 : 0 })));
+  return c.json(await listRecurring(c.env));
 });
 
 // Possible subscriptions: merchants not tracked in recurring, charged the
@@ -118,6 +152,16 @@ recurring.post("/", async (c) => {
     const cat = await first<{ id: number }>(c.env, "SELECT id FROM categories WHERE id = ?", body.category_id);
     if (!cat) return bad(c, "unknown category_id");
     categoryId = cat.id;
+  } else {
+    // Inherit the merchant's usual category (most common on its charges).
+    const common = await first<{ category_id: number }>(
+      c.env,
+      `SELECT category_id FROM transactions
+       WHERE COALESCE(merchant_name, name) = ? AND category_id IS NOT NULL AND excluded = 0 AND amount > 0
+       GROUP BY category_id ORDER BY COUNT(*) DESC, MAX(date) DESC LIMIT 1`,
+      merchant,
+    );
+    if (common) categoryId = common.category_id;
   }
 
   // Anchor last/next dates and default amount on the merchant's latest charge.
@@ -161,18 +205,13 @@ recurring.post("/", async (c) => {
 
   const row = await first<RecurringRow>(c.env, `${RECURRING_SELECT} WHERE r.merchant = ?`, merchant);
   if (!row) return notFound(c, "recurring row not found after insert");
-  return c.json({ ...row, manual: 1 }, 201);
+  return c.json({ ...row, manual: 1, stale: isStale(row) ? 1 : 0 }, 201);
 });
 
 // Re-run detection over existing transactions without a Plaid sync.
 recurring.post("/detect", async (c) => {
   await detectRecurring(c.env);
-  const rows = await q<RecurringRow>(
-    c.env,
-    `${RECURRING_SELECT} ORDER BY (r.next_date IS NULL), r.next_date, r.merchant`,
-  );
-  const manual = new Set(await manualRecurringMerchants(c.env));
-  return c.json(rows.map((r) => ({ ...r, manual: manual.has(r.merchant) ? 1 : 0 })));
+  return c.json(await listRecurring(c.env));
 });
 
 // Dismiss a "Possible subscriptions" candidate (persisted in settings).
@@ -189,11 +228,17 @@ recurring.post("/candidates/dismiss", async (c) => {
 
 recurring.patch("/:id", async (c) => {
   const id = Math.floor(num(c.req.param("id"), -1));
-  const body = await readJson<{ active?: boolean | number; category_id?: number | null }>(c);
+  const body = await readJson<{
+    active?: boolean | number; category_id?: number | null;
+    avg_amount?: number; cadence?: string; next_date?: string | null;
+  }>(c);
   if (!body) return bad(c, "invalid JSON body");
+  const existing = await first<RecurringRow>(c.env, `${RECURRING_SELECT} WHERE r.id = ?`, id);
+  if (!existing) return notFound(c, "recurring item not found");
 
   const sets: string[] = [];
   const binds: Bind[] = [];
+  let declared = false; // amount/cadence/date edits are user-declared: protect from detection
   if (hasOwn(body, "active")) {
     sets.push("active = ?");
     binds.push(body.active ? 1 : 0);
@@ -206,10 +251,50 @@ recurring.patch("/:id", async (c) => {
     sets.push("category_id = ?");
     binds.push(body.category_id ?? null);
   }
+  if (hasOwn(body, "avg_amount")) {
+    const amt = num(body.avg_amount);
+    if (!(amt > 0)) return bad(c, "avg_amount must be positive");
+    sets.push("avg_amount = ?");
+    binds.push(Math.round(amt * 100) / 100);
+    declared = true;
+  }
+  let cadence = existing.cadence;
+  if (hasOwn(body, "cadence")) {
+    if (typeof body.cadence !== "string" || !(CADENCES as readonly string[]).includes(body.cadence)) {
+      return bad(c, "cadence must be one of: " + CADENCES.join(", "));
+    }
+    cadence = body.cadence;
+    sets.push("cadence = ?");
+    binds.push(cadence);
+    declared = true;
+  }
+  if (hasOwn(body, "next_date")) {
+    if (body.next_date != null && (typeof body.next_date !== "string" || !isDate(body.next_date))) {
+      return bad(c, "next_date must be YYYY-MM-DD");
+    }
+    sets.push("next_date = ?");
+    binds.push(body.next_date ?? null);
+    declared = true;
+  } else if (hasOwn(body, "cadence") && cadence !== existing.cadence) {
+    // Cadence changed without an explicit date: re-anchor on the last charge.
+    const step = CADENCE_DAYS[cadence] ?? 30;
+    const last = existing.last_date ?? existing.last_txn_date;
+    let nextDate = last ? addDays(last, step) : addDays(todayStr(), step);
+    while (nextDate < todayStr()) nextDate = addDays(nextDate, step);
+    sets.push("next_date = ?");
+    binds.push(nextDate);
+  }
   if (sets.length === 0) return bad(c, "no fields to update");
 
   await run(c.env, `UPDATE recurring SET ${sets.join(", ")} WHERE id = ?`, ...binds, id);
+  if (declared) {
+    const manual = await readMerchantList(c.env, MANUAL_RECURRING_KEY);
+    if (!manual.includes(existing.merchant)) {
+      await writeMerchantList(c.env, MANUAL_RECURRING_KEY, [...manual, existing.merchant]);
+    }
+  }
   const row = await first<RecurringRow>(c.env, `${RECURRING_SELECT} WHERE r.id = ?`, id);
   if (!row) return notFound(c, "recurring item not found");
-  return c.json(row);
+  const manual = await manualRecurringMerchants(c.env);
+  return c.json({ ...row, manual: manual.includes(row.merchant) ? 1 : 0, stale: isStale(row) ? 1 : 0 });
 });

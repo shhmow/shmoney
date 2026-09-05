@@ -673,6 +673,11 @@ export async function detectRecurring(env: Env): Promise<void> {
     // Quarterly/yearly rule from the spec: CV <= 0.10 or all amounts identical.
     const consistentLong = (s: CadenceStats): boolean => s.cv <= 0.1 || s.identicalShare === 1;
 
+    // Recent charges closer together than a quarter contradict a long cadence
+    // (a merchant billing every few weeks is not a yearly subscription, even
+    // if two charges a year apart also exist in the full window).
+    const recentContradictsLong = recent !== null && recent.n >= 2 && recent.medGap < 60;
+
     let cadence: string | null = null;
     let use: CadenceStats | null = null;
     if (recent && recent.n >= 3 && recent.medGap >= 26 && recent.medGap <= 34 &&
@@ -685,10 +690,10 @@ export async function detectRecurring(env: Env): Promise<void> {
         recent.gapStd <= 2 && consistent(recent)) {
       cadence = "weekly";
       use = recent;
-    } else if (full && full.n >= 3 && full.medGap >= 84 && full.medGap <= 100 && consistentLong(full)) {
+    } else if (!recentContradictsLong && full && full.n >= 3 && full.medGap >= 84 && full.medGap <= 100 && consistentLong(full)) {
       cadence = "quarterly";
       use = full;
-    } else if (full && full.n >= 2 && full.medGap >= 340 && full.medGap <= 390 && consistentLong(full)) {
+    } else if (!recentContradictsLong && full && full.n >= 2 && full.medGap >= 340 && full.medGap <= 390 && consistentLong(full)) {
       cadence = "yearly";
       use = full;
     }
@@ -714,14 +719,17 @@ export async function detectRecurring(env: Env): Promise<void> {
     ));
     detectedMerchants.push(merchant);
   }
-  // Rows no longer detected are stale (e.g. a one-off streak ended): remove
-  // them — except manually tracked rows, which the user owns.
+  // Rows no longer detected are kept (with their history) while the last
+  // charge is under a year old: the API flags overdue ones as stale and the
+  // UI shows them under "Stopped?". Older leftovers are swept — except
+  // manually tracked rows, which the user owns.
   stmts.push(stmt(
     env,
     `DELETE FROM recurring
      WHERE merchant NOT IN (SELECT value FROM json_each(?1))
-       AND merchant NOT IN (SELECT value FROM json_each(?2))`,
-    JSON.stringify(detectedMerchants), JSON.stringify([...manual]),
+       AND merchant NOT IN (SELECT value FROM json_each(?2))
+       AND (last_date IS NULL OR last_date < ?3)`,
+    JSON.stringify(detectedMerchants), JSON.stringify([...manual]), addDays(today, -365),
   ));
   await batch(env, stmts);
   console.log(`recurring: ${detectedMerchants.length} merchants detected, ${manual.size} manual`);

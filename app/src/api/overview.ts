@@ -27,16 +27,94 @@ overview.get("/", async (c) => {
   const month = currentMonth();
 
   // --- Net worth: series from snapshots (assets minus liabilities), current from live balances.
-  const series = await q<{ date: string; value: number }>(
+  // Accounts were linked at different times (investments carry ~2y of
+  // reconstructed history, cash/cards only from their link date), so a plain
+  // per-date SUM would show a fake jump when the later accounts appear. Each
+  // account's balance is carried forward between snapshots and its earliest
+  // known balance is carried back before the first one.
+  const snaps = await q<{ account_id: string; date: string; balance: number; sign: number }>(
     env,
-    `SELECT s.date AS date,
-            ROUND(SUM(s.balance * CASE WHEN a.type IN ('credit','loan') THEN -1 ELSE 1 END), 2) AS value
-     FROM balance_snapshots s
-     JOIN accounts a ON a.id = s.account_id
+    `SELECT s.account_id, s.date, s.balance,
+            CASE WHEN a.type IN ('credit','loan') THEN -1 ELSE 1 END AS sign
+     FROM balance_snapshots s JOIN accounts a ON a.id = s.account_id
      WHERE a.hidden = 0
-     GROUP BY s.date
      ORDER BY s.date`,
   );
+  const dates = [...new Set(snaps.map((r) => r.date))];
+  const byAcct = new Map<string, { sign: number; points: { date: string; balance: number }[] }>();
+  for (const r of snaps) {
+    let a = byAcct.get(r.account_id);
+    if (!a) { a = { sign: r.sign, points: [] }; byAcct.set(r.account_id, a); }
+    a.points.push({ date: r.date, balance: r.balance });
+  }
+  // Before an account's first snapshot, rebuild its balance from the ledger
+  // anchored on today's posted balance: depository bal(d) = current + sum of
+  // posted amounts dated after d (outflows are positive, so adding them back
+  // walks the balance into the past); credit owed(d) = current - that sum.
+  // (Anchoring on the first snapshot is unsafe: a snapshot taken mid-day can
+  // predate transactions carrying the same date.) Earlier than the first
+  // transaction on record the balance is unknowable and held flat.
+  const liveBal = new Map<string, number>();
+  for (const r of await q<{ id: string; current_balance: number | null }>(
+    env, "SELECT id, current_balance FROM accounts WHERE hidden = 0",
+  )) liveBal.set(r.id, num(r.current_balance));
+  const ledger = await q<{ account_id: string; date: string; amount: number; type: string }>(
+    env,
+    `SELECT t.account_id, t.date, t.amount, a.type FROM transactions t JOIN accounts a ON a.id = t.account_id
+     WHERE a.hidden = 0 AND a.type IN ('depository','credit') AND t.pending = 0
+     ORDER BY t.date DESC`,
+  );
+  const ledgerByAcct = new Map<string, { date: string; amount: number }[]>();
+  for (const r of ledger) {
+    let l = ledgerByAcct.get(r.account_id);
+    if (!l) { l = []; ledgerByAcct.set(r.account_id, l); }
+    l.push({ date: r.date, amount: r.amount });
+  }
+  // Ensure the series starts no later than the oldest reconstructable ledger date.
+  const oldestLedger = ledger.length ? ledger[ledger.length - 1]!.date : null;
+  if (oldestLedger && (dates.length === 0 || oldestLedger < dates[0]!)) {
+    // add one synthetic point per month back to the oldest ledger date
+    let d = dates[0] ?? todayStr();
+    const extra: string[] = [];
+    while (d > oldestLedger) {
+      const dt = new Date(`${d}T12:00:00Z`);
+      dt.setUTCDate(dt.getUTCDate() - 7);
+      d = dt.toISOString().slice(0, 10);
+      if (d >= oldestLedger) extra.unshift(d);
+    }
+    dates.unshift(...extra);
+  }
+  const cursors = new Map<string, number>();
+  const series: { date: string; value: number }[] = [];
+  let carriedBack = 0;
+  let reconstructed = 0;
+  for (const d of dates) {
+    let v = 0;
+    for (const [id, a] of byAcct) {
+      let i = cursors.get(id) ?? -1;
+      while (i + 1 < a.points.length && a.points[i + 1].date <= d) i++;
+      cursors.set(id, i);
+      let bal: number;
+      if (i >= 0) {
+        bal = a.points[i].balance;
+      } else {
+        const p0 = a.points[0];
+        const l = ledgerByAcct.get(id);
+        if (l && l.length && d >= l[l.length - 1]!.date) {
+          let sum = 0;
+          for (const t of l) { if (t.date <= d) break; sum += t.amount; }
+          const live = liveBal.get(id) ?? p0.balance;
+          bal = a.sign < 0 ? live - sum : live + sum;
+          reconstructed++;
+        } else {
+          bal = p0.balance; // unknowable: hold flat
+          if (d === dates[0]) carriedBack++;
+        }
+      }
+      v += bal * a.sign;
+    }
+    series.push({ date: d, value: round2(v) });
+  }
   const cur = await first<{ v: number | null }>(
     env,
     `SELECT SUM(COALESCE(current_balance, 0) * CASE WHEN type IN ('credit','loan') THEN -1 ELSE 1 END) AS v
@@ -49,6 +127,12 @@ overview.get("/", async (c) => {
   let base = series.length > 0 ? series[0]!.value : current;
   for (const p of series) if (p.date <= cutoff) base = p.value;
   const change1m = round2(current - base);
+  // Earliest date on which every visible account has a real snapshot.
+  let fullFrom: string | null = null;
+  for (const a of byAcct.values()) {
+    const f = a.points[0]?.date ?? null;
+    if (f && (fullFrom === null || f > fullFrom)) fullFrom = f;
+  }
 
   // --- Account groups (hidden accounts excluded; loans grouped with credit).
   const accounts = (await q<AccountRow>(env, `${ACCOUNT_SELECT} WHERE a.hidden = 0 ORDER BY a.type, a.name`))
@@ -114,7 +198,7 @@ overview.get("/", async (c) => {
   const recent = await q<Txn>(env, `${TXN_SELECT} ORDER BY t.date DESC, t.id DESC LIMIT 8`);
 
   return c.json({
-    netWorth: { current, change1m, series },
+    netWorth: { current, change1m, series, fullFrom, carriedBack, reconstructed },
     groups: { cash, credit, investments, totals },
     freeToSpend,
     recent,

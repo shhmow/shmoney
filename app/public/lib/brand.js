@@ -106,7 +106,7 @@ export function merchantLabel(t) {
   if (m && !masked(m)) return m;
   const raw = (t.name || "").trim();
   // Drop bank boilerplate ("DES:", "ID:", "INDN:", "CO ID:", confirmation numbers).
-  const cut = raw.split(/\s+(?:DES|ID|INDN|CO ID|PMT INFO|CONF#|Conf#)[:\s]/i)[0];
+  const cut = raw.split(/\s+(?:DES|ID|INDN|CO ID|PMT INFO|CONF#|Conf#|Confirmation#|Confirmation)[:\s#]/i)[0];
   return (cut || raw || "Unknown").replace(/\s{2,}/g, " ").slice(0, 60);
 }
 

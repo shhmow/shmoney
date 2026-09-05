@@ -7,7 +7,7 @@
 // Endpoints (mounted under /api/market):
 //   GET /sectors?account_id=      sector exposure + concentration analysis
 //   GET /pulse?account_id=        11 SPDR sector ETFs + SPY, 1M/3M/1Y returns
-//   GET /performance?account_id=  per-holding returns + SPY 1Y series
+//   GET /performance?account_id=  per-holding returns + SPY series (2y/5y)
 import { Hono } from "hono";
 import type { Env } from "../types";
 import { q, first, run, num, round2 } from "./util";
@@ -62,9 +62,11 @@ function ysig(ms = 8000): AbortSignal | undefined {
 
 export interface PriceSeries { dates: string[]; closes: number[] }
 
-/** Daily closes for ~1y from the verified-working Yahoo chart API. */
-async function fetchChart(ticker: string): Promise<PriceSeries | null> {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker.toUpperCase())}?range=1y&interval=1d`;
+type ChartRange = "1y" | "2y" | "5y";
+
+/** Daily closes (default ~1y) from the verified-working Yahoo chart API. */
+async function fetchChart(ticker: string, range: ChartRange = "1y"): Promise<PriceSeries | null> {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker.toUpperCase())}?range=${range}&interval=1d`;
   const res = await fetch(url, { headers: { "user-agent": UA }, signal: ysig() });
   if (!res.ok) return null;
   const body = (await res.json()) as {
@@ -87,6 +89,26 @@ async function fetchChart(ticker: string): Promise<PriceSeries | null> {
 
 function chart(env: Env, ticker: string): Promise<PriceSeries | null> {
   return memo<PriceSeries>(env, `chart1y:${ticker.toUpperCase()}`, () => fetchChart(ticker));
+}
+
+/** Longer benchmark history (own cache key so the 1y holdings cache is untouched). */
+function chartLong(env: Env, ticker: string, range: ChartRange): Promise<PriceSeries | null> {
+  return memo<PriceSeries>(env, `chart${range}:${ticker.toUpperCase()}`, () => fetchChart(ticker, range));
+}
+
+/**
+ * Benchmark range that covers the portfolio's own value history: 2y by
+ * default (matches the backfill window), 5y once real snapshots reach past
+ * that. The hero hides the S&P overlay for any window it still cannot cover.
+ */
+async function benchmarkRange(env: Env): Promise<ChartRange> {
+  const row = await first<{ d: string | null }>(
+    env,
+    `SELECT MIN(s.date) AS d FROM balance_snapshots s JOIN accounts a ON a.id = s.account_id
+     WHERE a.type = 'investment' AND a.hidden = 0`,
+  );
+  const twoYearsAgo = new Date(Date.now() - 2 * 365 * 86400_000).toISOString().slice(0, 10);
+  return row && row.d && row.d < twoYearsAgo ? "5y" : "2y";
 }
 
 // quoteSummary needs a session cookie + crumb. This flow can be rate-limited
@@ -620,8 +642,9 @@ market.get("/performance", async (c) => {
   const accountId = c.req.query("account_id") || null;
   const holdings = await getHoldings(c.env, accountId);
   const tickers = tickersByValue(holdings);
+  const range = await benchmarkRange(c.env);
   const [spySeries, ...holdingSeries] = await Promise.all([
-    chart(c.env, "SPY"),
+    chartLong(c.env, "SPY", range),
     ...tickers.map((t) => chart(c.env, t)),
   ]);
 
@@ -645,5 +668,5 @@ market.get("/performance", async (c) => {
     ? spySeries.dates.map((date, i) => ({ date, close: spySeries.closes[i] }))
     : [];
 
-  return c.json({ spy, returns, best, worst, unpriced });
+  return c.json({ spy, spyRange: range, returns, best, worst, unpriced });
 });

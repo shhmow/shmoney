@@ -61,9 +61,26 @@ function chartMessage(svg, text) {
     font-size="13" font-family="Schibsted Grotesk, sans-serif">${esc(text)}</text>`;
 }
 
+/**
+ * Narrow screens: a 900-unit viewBox squeezed into ~300px renders 12px text at
+ * 4px. Re-base the viewBox width on the container so text scales with the
+ * device instead (height kept proportional to the original aspect, min 160).
+ */
+export function fitViewBox(svg, baseW, baseH) {
+  const w = svg.parentElement ? svg.parentElement.clientWidth : 0;
+  if (w > 0 && w < baseW * 0.75) {
+    const scaledH = Math.max(160, Math.round(baseH * Math.max(0.55, w / baseW) * 1.15));
+    svg.setAttribute("viewBox", `0 0 ${Math.round(w)} ${scaledH}`);
+  } else if (svg.dataset.baseVb) {
+    svg.setAttribute("viewBox", svg.dataset.baseVb);
+  }
+}
+
 /* ---------- area chart with crosshair + dot on hover ---------- */
 export function areaChart(svg, data, labels, color = "#1fa168", opts = {}) {
   if (!svg) return;
+  if (!svg.dataset.baseVb) svg.dataset.baseVb = svg.getAttribute("viewBox") || "0 0 900 240";
+  { const b = svg.dataset.baseVb.split(" ").map(Number); fitViewBox(svg, b[2], b[3]); }
   if (!data || data.length === 0) { chartMessage(svg, "No history yet"); return; }
   const single = data.length === 1;
   if (single) { data = [data[0], data[0]]; labels = [labels[0] || "", labels[0] || ""]; }
@@ -121,6 +138,8 @@ export function areaChart(svg, data, labels, color = "#1fa168", opts = {}) {
 /* ---------- grouped gradient bars (income vs spending) ---------- */
 export function groupedBars(svg, labels, seriesA, seriesB, opts = {}) {
   if (!svg) return;
+  if (!svg.dataset.baseVb) svg.dataset.baseVb = svg.getAttribute("viewBox") || "0 0 440 200";
+  { const b = svg.dataset.baseVb.split(" ").map(Number); fitViewBox(svg, b[2], b[3]); }
   if (!labels || labels.length === 0) { chartMessage(svg, "No history yet"); return; }
   const vb = (svg.getAttribute("viewBox") || "0 0 440 200").split(" ").map(Number);
   const W = vb[2], H = vb[3];

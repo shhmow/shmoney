@@ -1,0 +1,43 @@
+/* Budget + Recurring tab styles (namespaced bg- / rc-). */
+
+/* ---- budget ---- */
+.bg-pace { font-size: 12px; color: var(--muted); margin-top: 5px; font-variant-numeric: tabular-nums; }
+.bg-unbudgeted { font-size: 12.5px; color: var(--muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
+.bg-floored { color: var(--warn); font-weight: 700; }
+.bg-reb-over td { color: var(--crit); }
+#m-today:disabled { opacity: 1; cursor: default; }
+#m-today:not(:disabled):hover { border-color: var(--accent); }
+
+/* ---- recurring ---- */
+.rc-upcoming { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.rc-upcoming .rc-up { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 13px; }
+.rc-upcoming .rc-up .rc-when { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 92px; }
+.rc-upcoming .rc-up .rc-who { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rc-upcoming .rc-up .amt { font-size: 13px; }
+.rc-upcoming .rc-total { display: flex; justify-content: space-between; border-top: 1px solid var(--line); padding-top: 8px; margin-top: 4px; font-size: 13px; }
+.rc-upcoming .rc-total b { font-variant-numeric: tabular-nums; }
+.rc-group { margin-top: 16px; }
+.rc-group .label { margin-bottom: 4px; }
+.rc-group .rc-note { margin: 0 0 6px; }
+.rc-stale { opacity: .75; }
+.rc-stale .m::after { content: " stopped?"; font-size: 11px; color: var(--warn); font-weight: 600; margin-left: 4px; }
+.rc-ignored { margin-top: 14px; }
+.rc-ignored summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); padding: 6px 0; }
+.rc-ignored summary::-webkit-details-marker { display: none; }
+.rc-ignored summary::before { content: "\203A"; display: inline-block; width: 10px; transition: transform .15s; }
+.rc-ignored[open] summary::before { transform: rotate(90deg); }
+.rc-ignored .txn { opacity: .5; }
+.rc-edit input[type="number"] { width: 90px; }
+.rc-edit input[type="date"] { font: inherit; font-size: 13px; }
+.rc-cand { flex-wrap: wrap; }
+.rc-cand .rc-cand-ctl { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.rc-cand .who { flex: 1 1 200px; }
+
+@media (max-width: 880px) {
+  /* 16px stops iOS zooming into the field on focus */
+  .amount-input, .rc-edit input, .rc-edit select { font-size: 16px; }
+  .rowmenu { min-width: 32px; min-height: 32px; display: inline-flex; align-items: center; justify-content: center; }
+  .rc-cand .who { flex-basis: 100%; }
+  .rc-cand .rc-cand-ctl { width: 100%; justify-content: flex-end; }
+  .rc-upcoming .rc-up .rc-when { min-width: 70px; }
+}
