@@ -57,8 +57,9 @@ items.get("/links", async (c) => {
     if (l) out[l.key] = { ...l, ...(overrides[l.key] ?? {}) };
   }
   // Card brands that may live under another institution (Discover via Capital One).
+  const discCard = await first<{ n: number }>(c.env, "SELECT 1 AS n FROM accounts WHERE LOWER(name) LIKE '%discover%' LIMIT 1");
   const disc = institutionLinks("ins_33", "Discover");
-  if (disc && !out.discover) out.discover = { ...disc, ...(overrides.discover ?? {}) };
+  if (discCard && disc && !out.discover) out.discover = { ...disc, ...(overrides.discover ?? {}) };
   return c.json(out);
 });
 

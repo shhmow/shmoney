@@ -2,6 +2,7 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
 import { first, createLinkToken, exchangePublicToken, num, bad, notFound, readJson } from "./util";
+import { appOrigin } from "../lib/plaid";
 
 export const link = new Hono<{ Bindings: Env }>();
 
@@ -17,7 +18,7 @@ link.post("/token", async (c) => {
     if (!item) return notFound(c, "item not found");
     accessToken = item.access_token;
   }
-  const linkToken = await createLinkToken(c.env, accessToken ? { accessToken } : undefined);
+  const linkToken = await createLinkToken(c.env, { accessToken, origin: appOrigin(c.env, c.req.url) });
   return c.json({ link_token: linkToken });
 });
 

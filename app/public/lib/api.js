@@ -82,7 +82,7 @@ async function request(path, { method = "GET", body } = {}, retried = false) {
   try {
     res = await fetch(url, opts);
   } catch {
-    throw new Error("Network error — are you offline?");
+    throw new Error("Network error.");
   }
   if (res.status === 401) {
     if (retried) throw new Error("Not signed in");

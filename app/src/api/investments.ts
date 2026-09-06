@@ -236,7 +236,7 @@ investments.get("/", async (c) => {
   checks.push({
     id: "fees",
     label: "Fee drag",
-    detail: "No expense ratio data from Plaid. Review fund fees manually.",
+    detail: "No fee data.",
     status: "none",
   });
   const top = globalHoldings[0];
@@ -303,7 +303,8 @@ investments.get("/", async (c) => {
   const taxYear = new Date().getUTCFullYear();
   const deadline = `${taxYear + 1}-04-15`;
   const daysToDeadline = Math.max(0, Math.ceil((Date.parse(deadline + "T00:00:00Z") - Date.now()) / 86400_000));
-  const roth = {
+  const hasRoth = accounts.some((a) => /roth/i.test(`${a.subtype ?? ""} ${a.name}`));
+  const roth = !hasRoth && rothContributed <= 0 ? null : {
     limit: round2(rothLimit),
     contributed: round2(rothContributed),
     room: round2(Math.max(0, rothLimit - rothContributed)),

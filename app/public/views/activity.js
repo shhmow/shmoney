@@ -40,7 +40,7 @@ const acctById = () => new Map(accounts.map((a) => [String(a.id), a]));
  */
 function applyHashParams() {
   const qs = location.hash.split("?")[1];
-  if (!qs) return;
+  if (!qs) { state.q = ""; state.categoryId = ""; state.from = ""; state.to = ""; state.flagged = false; return; }
   const p = new URLSearchParams(qs);
   state.q = p.get("q") || "";
   state.categoryId = p.get("category") || "";
@@ -131,7 +131,7 @@ function acctHeader(a) {
   // The bank's own "available" already nets pending charges; only show it
   // when there is no limit to derive it from (two numbers for one idea confuse).
   const avail = a.type === "credit" && !u && a.available_balance != null
-    ? `<span class="sub">${fmtMoneyWhole(a.available_balance)} available (bank)</span>` : "";
+    ? `<span class="sub">${fmtMoneyWhole(a.available_balance)} available</span>` : "";
   const bank = bankLinks[a.links_key || brandOf(a)] || null;
   const open = bank ? `<a class="btn small" href="${esc(bank.activity)}" target="_blank" rel="noopener">Open in ${esc(bank.label)} &#8599;</a>` : "";
   const phone = bank && bank.phone ? `<a class="sub" href="tel:${esc(bank.phone.replace(/[^0-9+]/g, ""))}" style="text-decoration:none">${esc(bank.label)} ${esc(bank.phone)}</a>` : "";
@@ -151,7 +151,7 @@ function acctHeader(a) {
     ${u ? `<div class="util" style="margin-top:10px;max-width:420px">
       <div class="track"><div class="fill ${u.cls}" style="width:${Math.min(100, u.pct).toFixed(1)}%"></div></div>
       <div class="sub"><span>${Math.round(u.pct)}% of ${fmtMoneyWhole(u.limit)} limit${a.manual_limit && !a.credit_limit ? " (set manually)" : ""}</span><span>${fmtMoneyWhole(Math.max(0, u.limit - u.bal))} left${a.available_balance != null && Math.abs(Number(a.available_balance) - (u.limit - u.bal)) > 1 ? ` ${MID} bank says ${fmtMoneyWhole(a.available_balance)}` : ""}</span></div>
-    </div>` : a.type === "credit" ? `<div class="sub" style="margin-top:8px">No credit limit reported ${MID} <a href="#/settings" style="color:var(--ink-2)">set one in Settings</a> to see utilization.</div>` : ""}
+    </div>` : a.type === "credit" ? `<div class="sub" style="margin-top:8px">No credit limit ${MID} <a href="#/settings" style="color:var(--ink-2)">set one in Settings</a></div>` : ""}
     <div id="acct-month" class="sub" style="margin-top:8px"></div>
     ${phone ? `<div style="margin-top:4px">${phone}</div>` : ""}
   </div>`;
@@ -170,8 +170,8 @@ async function fillMonthSummary(a) {
     const co = Number(c.sumOut) || 0, po = Number(p.sumOut) || 0;
     const delta = po > 0 ? Math.round((co - po) / po * 100) : null;
     const arrow = delta == null ? "" : delta > 0 ? `<span style="color:var(--warn)">&#9650; ${delta}%</span>` : `<span style="color:var(--good)">&#9660; ${Math.abs(delta)}%</span>`;
-    el.innerHTML = `Out this month <b style="color:var(--ink)">${fmtMoneyWhole(co)}</b> ${MID} last month ${fmtMoneyWhole(po)} ${arrow}
-      ${MID} in this month <b style="color:var(--ink)">${fmtMoneyWhole(Number(c.sumIn) || 0)}</b>`;
+    el.innerHTML = `Out <b style="color:var(--ink)">${fmtMoneyWhole(co)}</b> this month ${MID} ${fmtMoneyWhole(po)} last month ${arrow}
+      ${MID} in <b style="color:var(--ink)">${fmtMoneyWhole(Number(c.sumIn) || 0)}</b>`;
     if (a.type === "credit") {
       // last payment received on the card (money in, flagged as a transfer)
       const pay = await api.get(`/transactions?account_id=${encodeURIComponent(a.id)}&direction=in&transfer=1&limit=1`);
@@ -199,18 +199,14 @@ function totalsLine() {
   if (!state.transactions.length) return "";
   const parts = [`${state.total} transaction${state.total === 1 ? "" : "s"}`];
   const tOut = state.transfersOut || 0, tIn = state.transfersIn || 0;
-  if (state.sumOut > 0) {
-    const detail = tOut > 0 ? ` <span class="sub">(${fmtMoneyWhole(state.spending || 0)} spending, ${fmtMoneyWhole(tOut)} transfers${state.sumOut - (state.spending || 0) - tOut > 1 ? ", rest excluded/refund-type" : ""})</span>` : "";
-    parts.push(`<b>${fmtMoneyWhole(state.sumOut)}</b> out${detail}`);
-  }
-  if (state.sumIn > 0) {
-    const detail = tIn > 0 ? ` <span class="sub">(${fmtMoneyWhole(state.income || 0)} income, ${fmtMoneyWhole(tIn)} transfers)</span>` : "";
-    parts.push(`<b class="pos">${fmtMoneyWhole(state.sumIn)}</b> in${detail}`);
-  }
-  if (state.sumOut > 0 && state.sumIn > 0) {
-    const net = state.sumIn - state.sumOut;
+  const spending = state.spending || 0, income = state.income || 0;
+  if (spending > 0) parts.push(`<b>${fmtMoneyWhole(spending)}</b> spent`);
+  if (income > 0) parts.push(`<b class="pos">${fmtMoneyWhole(income)}</b> earned`);
+  if (spending > 0 && income > 0) {
+    const net = income - spending;
     parts.push(`net <b class="${net >= 0 ? "pos" : ""}">${fmtMoney(net, { cents: false })}</b>`);
   }
+  if (tOut > 0 || tIn > 0) parts.push(`<span class="sub">transfers ${fmtMoneyWhole(tOut)} out, ${fmtMoneyWhole(tIn)} in</span>`);
   return `<div class="sub" style="margin:0 0 4px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><span>${parts.join(` ${MID} `)}</span><a href="${exportHref()}" download style="text-decoration:none">Export CSV &#8595;</a></div>`;
 }
 
@@ -225,13 +221,12 @@ function listHtml() {
     if (accounts.length === 0) {
       return emptyState({
         title: "No transactions yet",
-        body: "Link a bank and your activity will fill in here, grouped by day across every account.",
-        actionLabel: "Go to Settings → Link account", actionHash: "#/settings", glyph: "list",
+        body: "Link a bank to see them here.",
+        actionLabel: "Link an account", actionHash: "#/settings", glyph: "list",
       });
     }
     return head + emptyState({
-      title: anyFilter ? "No matching transactions" : "Nothing here yet",
-      body: anyFilter ? "Try widening the search, date range, or category filter." : "Transactions appear after the next sync.",
+      title: anyFilter ? "Nothing matches" : "No transactions yet",
       glyph: "list",
     });
   }
@@ -288,10 +283,10 @@ export function openDetail(t, onSaved) {
       <div class="hero-num" style="font-size:26px;margin-bottom:14px"><span class="${amt.cls}" style="font-size:26px">${amt.text}</span></div>
 
       <div class="kv">
-        <span class="k">Descriptor</span><span class="v">${esc(t.name || MID)}</span>
+        <span class="k">Bank text</span><span class="v">${esc(t.name || MID)}</span>
         ${t.merchant_name && t.merchant_name !== merchant ? `<span class="k">Merchant</span><span class="v">${esc(t.merchant_name)}</span>` : ""}
         <span class="k">Status</span><span class="v">${t.pending ? "Pending" : "Posted"}${t.payment_channel ? ` ${MID} ${esc(t.payment_channel)}` : ""}</span>
-        ${t.plaid_category ? `<span class="k">Bank tag</span><span class="v" title="How the bank's data provider classified this charge">${esc(plaidTagLabel(t.plaid_category))}</span>` : ""}
+        ${t.plaid_category ? `<span class="k">Bank category</span><span class="v">${esc(plaidTagLabel(t.plaid_category))}</span>` : ""}
         ${t.website ? `<span class="k">Website</span><span class="v"><a href="https://${esc(String(t.website).replace(/^https?:\/\//, ""))}" target="_blank" rel="noopener">${esc(t.website)}</a></span>` : ""}
         ${acct && acct.mask ? `<span class="k">Account</span><span class="v">${esc(acct.name)} ${MID}${MID}${esc(acct.mask)}</span>` : ""}
       </div>
@@ -300,13 +295,13 @@ export function openDetail(t, onSaved) {
         <div class="bank-head">${acct ? instTile(acct, { size: 26 }) : ""}<b>${esc(bank.label)}</b>${bank.phone ? `<span class="sub" style="margin-left:auto">${esc(bank.phone)}</span>` : ""}</div>
         <div class="bank-actions">
           <a class="btn small" href="${esc(bank.activity)}" target="_blank" rel="noopener">Open in ${esc(bank.label)} &#8599;</a>
-          ${isCharge ? `<a class="btn small" href="${esc(bank.dispute)}" target="_blank" rel="noopener">How to dispute &#8599;</a>` : ""}
+          ${isCharge ? `<a class="btn small" href="${esc(bank.dispute)}" target="_blank" rel="noopener">Dispute &#8599;</a>` : ""}
           <button type="button" class="btn small" id="d-copy">Copy details</button>
         </div>
-        <div class="muted-note" style="margin-top:8px">Banks don't allow deep links to a single charge. Open your activity, find <b>${esc(fmtDate(t.date))} ${MID} ${esc(amt.text.replace(/^[+−-]/, ""))}</b>, then choose Dispute. Copy details pastes the date, merchant and amount.</div>
+        <div class="muted-note" style="margin-top:8px">Find <b>${esc(fmtDate(t.date))} ${MID} ${esc(amt.text.replace(/^[+−-]/, ""))}</b> in your bank's activity.</div>
       </div>` : ""}
 
-      <div class="related" id="d-related"><div class="label">Other charges from this merchant</div><div class="sub" style="margin-top:4px">Looking</div></div>
+      <div class="related" id="d-related"><div class="label">Same merchant</div><div class="sub" style="margin-top:4px">${MID}</div></div>
 
       <div class="field">
         <label class="label" for="d-cat">Category</label>
@@ -322,7 +317,7 @@ export function openDetail(t, onSaved) {
       </label>
       <label class="switch" style="margin-bottom:10px">
         <input type="checkbox" id="d-flag"${t.flagged ? " checked" : ""}>
-        <span class="knob"></span><span>Flag for follow-up (dispute, refund, question)</span>
+        <span class="knob"></span><span>Flag for follow-up</span>
       </label>
       <label class="switch" style="margin-bottom:10px">
         <input type="checkbox" id="d-excluded"${t.excluded ? " checked" : ""}>
@@ -373,12 +368,12 @@ export function openDetail(t, onSaved) {
     if (!el) return;
     const rows = (r && r.transactions) || [];
     if (!rows.length) {
-      el.innerHTML = `<div class="label">Other charges from this merchant</div><div class="sub" style="margin-top:4px">First time this merchant shows up.</div>`;
+      el.innerHTML = `<div class="label">Same merchant</div><div class="sub" style="margin-top:4px">First charge from this merchant.</div>`;
       return;
     }
     const others = Math.max(0, (r.count || 0) - 1);
-    el.innerHTML = `<div class="label">Other charges from this merchant</div>
-      <div class="sub" style="margin:4px 0 6px">${others} other${others === 1 ? "" : "s"} ${MID} ${fmtMoneyWhole(r.total)} spent in total including this one${r.first ? ` since ${esc(fmtDate(r.first))}` : ""}</div>
+    el.innerHTML = `<div class="label">Same merchant</div>
+      <div class="sub" style="margin:4px 0 6px">${others} more ${MID} ${fmtMoneyWhole(r.total)} total${r.first ? ` since ${esc(fmtDate(r.first))}` : ""}</div>
       ${rows.slice(0, 5).map((x) => {
         const xa = txnAmount(x.amount);
         return `<div class="txn"><div class="who"><div class="m">${esc(fmtDate(x.date))} <span class="sub">${MID} ${esc(x.account_name || "")}</span></div></div><div class="${xa.cls}" style="font-size:13px">${xa.text}</div></div>`;
@@ -496,11 +491,13 @@ export default async function render(main) {
     </div>
 
     <div class="toolbar" id="txn-toolbar">
-      <input type="search" id="f-q" placeholder="Search merchants, notes, or an amount" value="${esc(state.q)}" aria-label="Search transactions">
+      <input type="search" id="f-q" placeholder="Search" value="${esc(state.q)}" aria-label="Search transactions">
       <select id="f-cat" aria-label="Filter by category">
         <option value="">All categories</option>
         ${categoryOptions(state.categoryId)}
       </select>
+      <button type="button" class="chip" data-quick="month">This month</button>
+      <button type="button" class="chip" data-quick="last">Last month</button>
       <input type="date" id="f-from" value="${esc(state.from)}" aria-label="From date">
       <input type="date" id="f-to" value="${esc(state.to)}" aria-label="To date">
       <button type="button" class="chip${state.flagged ? " active" : ""}" id="f-flag" aria-pressed="${state.flagged}" title="Only flagged transactions">&#9873; Flagged</button>
@@ -597,6 +594,15 @@ export default async function render(main) {
     reload(false);
   }, 300));
   main.querySelector("#f-cat").addEventListener("change", (e) => { state.categoryId = e.target.value; reload(false); });
+  main.querySelectorAll("[data-quick]").forEach((b) => b.addEventListener("click", () => {
+    const m = b.dataset.quick === "last" ? shiftMonth(currentMonth(), -1) : currentMonth();
+    const [y, mo] = m.split("-").map(Number);
+    state.from = `${m}-01`;
+    state.to = `${m}-${String(new Date(y, mo, 0).getDate()).padStart(2, "0")}`;
+    main.querySelector("#f-from").value = state.from;
+    main.querySelector("#f-to").value = state.to;
+    reload(false);
+  }));
   main.querySelector("#f-from").addEventListener("change", (e) => { state.from = e.target.value; reload(false); });
   main.querySelector("#f-to").addEventListener("change", (e) => { state.to = e.target.value; reload(false); });
   main.querySelector("#f-flag").addEventListener("click", (e) => {

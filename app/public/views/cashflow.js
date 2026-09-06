@@ -2,7 +2,7 @@
 // Periods: single month (with prev/next arrows), YTD, trailing 12 months.
 import { api } from "../lib/api.js";
 import {
-  esc, fmtMoneyWhole, emptyState, errorCard, currentMonth, shiftMonth, monthShort, monthLabel, MID,
+  esc, fmtMoneyWhole, fmtDate, emptyState, errorCard, currentMonth, shiftMonth, monthShort, monthLabel, MID,
 } from "../lib/format.js";
 import { sankey, groupedBars } from "../lib/charts.js";
 import { merchantTile } from "../lib/brand.js";
@@ -49,11 +49,15 @@ function buildSankey(data) {
 }
 
 /** Inclusive date bounds of the viewed period, for the transactions API. */
+function monthEnd(m) {
+  const [y, mo] = m.split("-").map(Number);
+  return `${m}-${String(new Date(y, mo, 0).getDate()).padStart(2, "0")}`;
+}
 function periodRange() {
   const cur = currentMonth();
-  if (period === "ytd") return { from: `${cur.slice(0, 4)}-01-01`, to: `${cur}-31` };
-  if (period === "1y") return { from: `${shiftMonth(cur, -11)}-01`, to: `${cur}-31` };
-  return { from: `${month}-01`, to: `${month}-31` };
+  if (period === "ytd") return { from: `${cur.slice(0, 4)}-01-01`, to: monthEnd(cur) };
+  if (period === "1y") return { from: `${shiftMonth(cur, -11)}-01`, to: monthEnd(cur) };
+  return { from: `${month}-01`, to: monthEnd(month) };
 }
 
 /** Node click: fetch the period's transactions for that node and render a breakdown. */
@@ -67,7 +71,7 @@ async function drill(main, data, nid, nlabel) {
     panel.hidden = false;
     const x = panel.querySelector("#cf-drill-close");
     if (x) x.addEventListener("click", () => { panel.hidden = true; panel.innerHTML = ""; });
-    panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    panel.scrollIntoView({ behavior: "smooth", block: window.innerWidth < 640 ? "start" : "nearest" });
   };
 
   if (nid === "hub") {
@@ -87,7 +91,7 @@ async function drill(main, data, nid, nlabel) {
   if (nid === "saved") {
     panel.innerHTML = `<div style="border-top:1px solid var(--line, #232a27);margin-top:14px;padding-top:12px">
       ${head("Saved", periodLabel())}
-      <p class="sub" style="margin:0">Income minus spending for the period: ${fmtMoneyWhole(Number(data.totalIncome) || 0)} in, ${fmtMoneyWhole(Number(data.totalSpending) || 0)} out. A computed leftover, not a bank balance. It lands wherever the money sits: checking, savings, or transfers you made to Fidelity.</p>
+      <p class="sub" style="margin:0">${fmtMoneyWhole(Number(data.totalIncome) || 0)} in, ${fmtMoneyWhole(Number(data.totalSpending) || 0)} out. A computed leftover, not a balance.</p>
     </div>`;
     wire();
     return;
@@ -99,7 +103,7 @@ async function drill(main, data, nid, nlabel) {
     const folded = (data.spending || []).filter((r) => r.amount > 0 && !shown.has(`cat:${r.category_id ?? "none"}`));
     const top = Math.max(...folded.map((r) => r.amount), 1);
     panel.innerHTML = `<div style="border-top:1px solid var(--line, #232a27);margin-top:14px;padding-top:12px">
-      ${head("Smaller categories", `${fmtMoneyWhole(folded.reduce((a, r) => a + r.amount, 0))} ${MID} ${periodLabel()} ${MID} click one to drill in`)}
+      ${head("Smaller categories", `${fmtMoneyWhole(folded.reduce((a, r) => a + r.amount, 0))} ${MID} ${periodLabel()}`)}
       ${folded.map((r) => `<div class="drill-row" data-cat="${r.category_id ?? "none"}" data-catname="${esc(r.name)}" style="display:grid;grid-template-columns:150px 1fr 90px;gap:10px;align-items:center;padding:5px 0;cursor:pointer">
         <span>${esc(r.name)}</span>
         <div class="track"><div class="fill" style="width:${Math.round(r.amount / top * 100)}%"></div></div>
@@ -170,7 +174,7 @@ async function drill(main, data, nid, nlabel) {
       <div>
         <div class="sub" style="margin-bottom:6px">LARGEST</div>
         ${list.map((t) => `<div style="display:flex;gap:10px;align-items:baseline;padding:4px 0">
-          <span class="sub mono">${esc(String(t.date))}</span>
+          <span class="sub mono">${esc(fmtDate(t.date))}</span>
           <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(t.merchant_name || t.name || "")}">${esc(t.merchant_name || t.name || "")}</span>
           <span class="mono">${fmtMoneyWhole(val(t))}</span></div>`).join("")}
       </div>
@@ -214,11 +218,11 @@ function statsHtml(st) {
   const paceTiles = isMonth ? `<div class="cf-tiles">
     ${tile("Per day", fmtMoneyWhole(p.perDay), p.prevPerDay ? `last month ${fmtMoneyWhole(p.prevPerDay)}/day ${delta(p.perDay, p.prevPerDay)}` : "")}
     ${tile(isCur ? "Projected month" : "Month total", fmtMoneyWhole(p.projected), isCur ? `${fmtMoneyWhole(p.monthSpend)} so far ${MID} day ${p.dayOfMonth} of ${p.daysInMonth}` : p.prevSpend ? `last month ${fmtMoneyWhole(p.prevSpend)} ${delta(p.monthSpend, p.prevSpend)}` : "")}
-    ${tile("Fixed vs variable", `${fmtMoneyWhole(p.fixed)} <span class="sub">/</span> ${fmtMoneyWhole(p.variable)}`, "rent, bills, subscriptions vs everything else")}
-    ${tile("12-mo typical month", fmtMoneyWhole(st.medianSpend), `average ${fmtMoneyWhole(st.avgSpend)}`)}
+    ${tile("Fixed / variable", `${fmtMoneyWhole(p.fixed)} <span class="sub">/</span> ${fmtMoneyWhole(p.variable)}`, "bills and subscriptions / everything else")}
+    ${tile("Typical month", fmtMoneyWhole(st.medianSpend), `12-month median ${MID} average ${fmtMoneyWhole(st.avgSpend)}`)}
   </div>` : "";
 
-  const catTable = cats.length ? `<div class="card" style="margin-top:14px">
+  const catTable = cats.length && isMonth ? `<div class="card" style="margin-top:14px">
     <div class="label" style="margin-bottom:8px">Categories ${MID} ${esc(monthLabel(st.month))} vs last month</div>
     <div class="table-wrap"><table class="cf-cats">
       <thead><tr><th>Category</th><th>This month</th><th>Last month</th><th>Change</th><th>3-mo avg</th><th>Same month last year</th>${isCur ? "<th>Projected</th>" : ""}</tr></thead>
@@ -232,7 +236,7 @@ function statsHtml(st) {
         <td>${c.lastYear ? fmtMoneyWhole(c.lastYear) : `<span class="sub">${MID}</span>`}</td>
         ${isCur ? `<td>${fmtMoneyWhole(c.projected)}</td>` : ""}
       </tr>`).join("")}</tbody></table></div>
-    <div class="muted-note" style="margin-top:8px">Click a row to see its merchants. Change compares against last month; red means spending went up.</div>
+    <div class="muted-note" style="margin-top:8px">Click a row for merchants. Red = up from last month.</div>
   </div>` : "";
 
   const merchants = tops.length ? `<div class="card">
@@ -241,13 +245,13 @@ function statsHtml(st) {
       <span class="sub mono" style="width:18px;text-align:right">${i + 1}</span>
       <span class="dot">${merchantTile({ merchant_name: m.merchant, name: m.merchant, logo_url: m.logo_url, website: m.website })}</span>
       <div class="who"><div class="m" style="font-size:13.5px">${esc(m.merchant)}</div>
-        <div class="meta"><span>${m.count} &#215; ${fmtMoneyWhole(m.avg)} avg ${MID} ${m.share}% of spend</span></div></div>
+        <div class="meta"><span>${m.count} &#215; ${fmtMoneyWhole(m.avg)} avg ${MID} ${fmtPct(m.share)} of spend</span></div></div>
       <div style="text-align:right"><div class="amt" style="font-size:13.5px">${fmtMoneyWhole(m.total)}</div><div class="sub" style="font-size:11.5px">${delta(m.total, m.prev)} vs prior</div></div>
     </button>`).join("")}
   </div>` : "";
 
   const weekdays = wk.length ? `<div class="card">
-    <div class="label" style="margin-bottom:8px">Spend by weekday ${MID} 6-month daily average</div>
+    <div class="label" style="margin-bottom:8px">By weekday ${MID} 6-month average</div>
     <div class="cf-week">${wk.map((w) => `<div class="cf-day"><div class="cf-bar-wrap"><div class="cf-bar" style="height:${Math.max(3, Math.round(w.avg / wkMax * 100))}%" title="${esc(w.day)}: ${fmtMoneyWhole(w.avg)}/day"></div></div><div class="sub mono" style="font-size:10.5px">${w.day}</div><div class="sub" style="font-size:11px">${fmtMoneyWhole(w.avg)}</div></div>`).join("")}</div>
   </div>` : "";
 
@@ -258,12 +262,12 @@ function statsHtml(st) {
       <tbody>${months.slice().reverse().map((m) => `<tr>
         <td>${esc(monthLabel(m.month))}</td><td>${fmtMoneyWhole(m.income)}</td><td>${fmtMoneyWhole(m.spending)}</td>
         <td class="${m.net >= 0 ? "pos" : "negd"}">${fmtMoney(m.net, { cents: false })}</td>
-        <td>${m.rate == null ? `<span class="sub">${MID}</span>` : `${Math.round(m.rate)}%`}</td><td>${m.count}</td></tr>`).join("")}</tbody>
+        <td>${m.rate == null ? `<span class="sub">${MID}</span>` : fmtPct(m.rate, 0)}</td><td>${m.count}</td></tr>`).join("")}</tbody>
     </table></div>
   </div>` : "";
 
   const left = (st.leftOut || []).filter((r) => r.inflow > 0 || r.outflow > 0);
-  const leftOut = left.length ? `<p class="muted-note" style="margin:12px 0 0">Not counted above (transfers, excluded, gift-type categories): ${left.map((r) => `${esc(r.name)} ${r.inflow ? `+${fmtMoneyWhole(r.inflow)}` : ""}${r.inflow && r.outflow ? " / " : ""}${r.outflow ? `${MINUS_SIGN}${fmtMoneyWhole(r.outflow)}` : ""}`).join(` ${MID} `)}. Change a category's kind in <a href="#/settings">Settings</a> to include it.</p>` : "";
+  const leftOut = left.length ? `<p class="muted-note" style="margin:12px 0 0">Not counted (transfers and excluded): ${left.map((r) => `${esc(r.name)} ${r.inflow ? `+${fmtMoneyWhole(r.inflow)}` : ""}${r.inflow && r.outflow ? " / " : ""}${r.outflow ? `${MINUS_SIGN}${fmtMoneyWhole(r.outflow)}` : ""}`).join(` ${MID} `)}.</p>` : "";
 
   return `<div id="cf-stats">
     ${paceTiles}
@@ -300,9 +304,7 @@ function periodLabel() {
 }
 
 function flowTitle() {
-  if (period === "ytd") return "Where this year's money went";
-  if (period === "1y") return "Where the last 12 months' money went";
-  return `Where ${monthLabel(month)}'s money went`;
+  return `Money flow ${MID} ${periodLabel()}`;
 }
 
 export default async function render(main) {
@@ -359,23 +361,23 @@ export default async function render(main) {
         : sankeyData
         ? `<figure>
             <svg id="cf-sankey" viewBox="0 0 900 330" role="img" aria-label="Money flow for ${esc(periodLabel())}: ${fmtMoneyWhole(totalIncome)} of income traced to spending categories with ${fmtMoneyWhole(saved)} kept as savings"></svg>
-            <figcaption class="sub" style="margin-top:8px">Every dollar in, traced to where it went. Each category keeps its own color; green = kept. Click a node to break it down.</figcaption>
+            <figcaption class="sub" style="margin-top:8px">Click a node to break it down.</figcaption>
           </figure>
           <div id="cf-drill" hidden></div>`
         : emptyState({
             title: "No cash flow yet",
-            body: "Once income and spending land in your accounts, this traces every dollar from paycheck to category.",
-            actionLabel: "Go to Settings → Link account", actionHash: "#/settings", glyph: "flow",
+            body: "Needs income and spending in a linked account.",
+            actionLabel: "Link an account", actionHash: "#/settings", glyph: "flow",
           })}
     </div>
 
     <div class="grid two" style="margin-top:14px">
       <div class="card">
-        <div class="label" style="margin-bottom:10px">Income vs spending ${MID} ${months.length || 6} months</div>
+        <div class="label" style="margin-bottom:10px">Income and spending ${MID} ${months.length || 6} months</div>
         ${months.length
           ? `<figure><svg id="cf-bars" viewBox="0 0 440 200" role="img" aria-label="Monthly income versus spending, ${months.length} months"></svg></figure>
-             <div class="legend"><span><i style="background:var(--c1)"></i>Income</span><span><i style="background:var(--c2)"></i>Spending</span><span class="sub" style="margin-left:auto">hover a bar for the amount</span></div>`
-          : emptyState({ title: "No history yet", body: "Monthly income and spending bars appear after your first full month of data.", glyph: "bars" })}
+             <div class="legend"><span><i style="background:var(--c1)"></i>Income</span><span><i style="background:var(--c2)"></i>Spending</span></div>`
+          : emptyState({ title: "No history yet", body: "Needs a full month of data.", glyph: "bars" })}
       </div>
       <div class="card" style="display:flex;flex-direction:column;justify-content:center;gap:4px">
         <div class="label">Savings rate ${MID} ${esc(period === "month" ? monthShort(month) : periodLabel())}</div>
@@ -383,7 +385,7 @@ export default async function render(main) {
           ? `<div class="hero-num" style="color:var(--accent)">${Math.round(rate * (Math.abs(rate) <= 1 ? 100 : 1))}%</div>
              <div class="sub">${fmtMoneyWhole(saved)} kept${avg3 != null ? ` ${MID} 3-month average ${avg3}%` : ""}</div>`
           : `<div class="hero-num" style="color:var(--muted)">&#8212;</div>
-             <div class="sub">Savings rate shows once income arrives.</div>`}
+             <div class="sub">No income this period.</div>`}
       </div>
     </div>
     ${statsHtml(stats)}
@@ -408,8 +410,8 @@ export default async function render(main) {
       const fig = main.querySelector("#cf-sankey");
       if (fig && fig.closest("figure")) {
         fig.closest("figure").outerHTML = emptyState({
-          title: "Not enough flow to draw yet",
-          body: "The flow diagram needs both income and spending in the period.",
+          title: "Not enough to draw",
+          body: "Needs both income and spending in this period.",
           glyph: "flow",
         });
       }

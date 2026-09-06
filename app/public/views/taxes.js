@@ -11,15 +11,44 @@ let expQuery = "";
 let expResults = null;
 
 /* ---------------- rate tables (2026) ---------------- */
+// Simplified 2026 state tables. Flat states use rate + a standard deduction
+// or exemption; progressive states are approximated with a few brackets.
 const STATES = {
+  AZ: { name: "Arizona", type: "flat", rate: .025, sd: 15750, note: "2.5% flat" },
   CA: { name: "California", type: "brackets", sd: 5706, ex: 0,
         brackets: [[10906, .01], [25842, .02], [40784, .04], [56612, .06], [71528, .08], [Infinity, .093]],
         note: "simplified brackets" },
+  CO: { name: "Colorado", type: "flat", rate: .044, sd: 15750, note: "4.4% flat" },
+  GA: { name: "Georgia", type: "flat", rate: .0519, sd: 12000, note: "5.19% flat" },
+  IL: { name: "Illinois", type: "flat", rate: .0495, ex: 2850, note: "4.95% flat" },
   IN: { name: "Indiana", type: "flat", rate: .0295, ex: 1000, note: "2.95% flat, county tax not included" },
+  KY: { name: "Kentucky", type: "flat", rate: .04, sd: 3270, note: "4% flat" },
   MA: { name: "Massachusetts", type: "flat", rate: .05, ex: 4400, note: "5% flat" },
-  TX: { name: "Texas", type: "none", note: "no income tax" },
+  MI: { name: "Michigan", type: "flat", rate: .0425, ex: 5800, note: "4.25% flat, city tax not included" },
+  NC: { name: "North Carolina", type: "flat", rate: .0399, sd: 12750, note: "3.99% flat" },
+  NJ: { name: "New Jersey", type: "brackets", sd: 0, ex: 1000,
+        brackets: [[20000, .014], [35000, .0175], [40000, .035], [75000, .05525], [500000, .0637], [Infinity, .0897]],
+        note: "simplified brackets" },
+  NY: { name: "New York", type: "brackets", sd: 8000, ex: 0,
+        brackets: [[8500, .04], [11700, .045], [13900, .0525], [80650, .055], [215400, .06], [Infinity, .0685]],
+        note: "simplified brackets, NYC tax not included" },
+  OH: { name: "Ohio", type: "brackets", sd: 0, ex: 0,
+        brackets: [[26050, 0], [100000, .0275], [Infinity, .035]], note: "simplified brackets" },
+  PA: { name: "Pennsylvania", type: "flat", rate: .0307, note: "3.07% flat, local tax not included" },
+  UT: { name: "Utah", type: "flat", rate: .045, note: "4.5% flat, credits not modeled" },
+  VA: { name: "Virginia", type: "brackets", sd: 8500, ex: 0,
+        brackets: [[3000, .02], [5000, .03], [17000, .05], [Infinity, .0575]], note: "simplified brackets" },
+  WI: { name: "Wisconsin", type: "brackets", sd: 13930, ex: 0,
+        brackets: [[14680, .035], [29370, .044], [323290, .053], [Infinity, .0765]], note: "simplified brackets" },
+  AK: { name: "Alaska", type: "none", note: "no income tax" },
   FL: { name: "Florida", type: "none", note: "no income tax" },
+  NV: { name: "Nevada", type: "none", note: "no income tax" },
+  NH: { name: "New Hampshire", type: "none", note: "no wage tax" },
+  SD: { name: "South Dakota", type: "none", note: "no income tax" },
+  TN: { name: "Tennessee", type: "none", note: "no income tax" },
+  TX: { name: "Texas", type: "none", note: "no income tax" },
   WA: { name: "Washington", type: "none", note: "no income tax" },
+  WY: { name: "Wyoming", type: "none", note: "no income tax" },
 };
 const FED = {
   single: { sd: 16100, brackets: [[12400, .10], [50400, .12], [105700, .22], [201775, .24], [256225, .32], [640600, .35], [Infinity, .37]] },
@@ -28,28 +57,29 @@ const FED = {
 const TREATS = { w2: "W2 withheld", se: "1099 self emp", none: "Not taxable" };
 
 /* ---------------- profile ---------------- */
-function defaultTreatment(name) {
+// New income sources start as W2 in the resident state unless the name says
+// otherwise (freelance, contract, PayPal, Venmo, 1099 read as self-employment).
+function defaultTreatment(name, res) {
   const n = name.toLowerCase();
-  if (n.includes("spacex")) return { treat: "w2", state: "TX", fedWh: 0, stWh: 0 };
-  if (n.includes("paypal")) return { treat: "se", state: "MA", fedWh: 0, stWh: 0 };
-  if (n.includes("bully")) return { treat: "se", state: "MA", fedWh: 0, stWh: 0 };
-  if (n === "income") return { treat: "w2", state: "IN", fedWh: 0, stWh: 0 };
-  return { treat: "se", state: "MA", fedWh: 0, stWh: 0 };
+  const se = /freelanc|contract|consult|1099|paypal|venmo|stripe|client|side/.test(n);
+  return { treat: se ? "se" : "w2", state: res, fedWh: 0, stWh: 0 };
 }
 
 function ensureProfile() {
   if (!profile || typeof profile !== "object") profile = {};
   if (!profile.filing) profile.filing = "single";
-  if (!profile.res) profile.res = "MA";
+  if (!profile.res || !STATES[profile.res]) profile.res = "CA";
   if (!profile.treatments) profile.treatments = {};
   if (!profile.payments) profile.payments = {};
   for (const s of data.sources) {
-    if (!profile.treatments[s.category_id]) profile.treatments[s.category_id] = defaultTreatment(s.name);
+    if (!profile.treatments[s.category_id]) profile.treatments[s.category_id] = defaultTreatment(s.name, profile.res);
   }
   for (const p of data.payments) {
     if (!profile.payments[p.id]) {
       const n = p.name.toLowerCase();
-      const kind = n.includes("mass") || n.includes("ma dor") ? "MA" : "fed";
+      // Federal unless the descriptor names a state ("MA DOR", "FRANCHISE TAX BD", "NYS DTF").
+      const st = Object.keys(STATES).find((code) => new RegExp(`\\b${code}\\b|${STATES[code].name.toLowerCase()}`).test(n));
+      const kind = /irs|usatax|us treas/.test(n) || !st ? "fed" : st;
       // A payment early in the year is usually the PRIOR year's filing balance.
       const priorYear = p.date < `${data.year}-06-01`;
       profile.payments[p.id] = { kind, year: priorYear ? String(Number(data.year) - 1) : data.year };
@@ -184,12 +214,12 @@ function estimateHtml(c) {
   liabRows += lrow("Total", fmt(c.liab), "", "total");
 
   let paidRows = "";
-  paidRows += lrow("Fed withheld", fmt(c.fedWh), "from W2 paychecks, set in SETUP");
-  paidRows += lrow("State withheld", fmt(c.stWh), "from W2 paychecks, set in SETUP");
+  paidRows += lrow("Fed withheld", fmt(c.fedWh), "entered in Setup");
+  paidRows += lrow("State withheld", fmt(c.stWh), "entered in Setup");
   if (c.w2Missing && c.w2Missing.length) {
     paidRows += `<div class="lrow"><span class="k" style="color:var(--warn)">Check withholding</span>
       <span class="v" style="font-weight:500;color:var(--warn);white-space:normal;text-align:right;font-size:12.5px">
-      ${esc(c.w2Missing.join(", "))} ${c.w2Missing.length === 1 ? "is" : "are"} W2 but no withholding is entered, so the amount owed above is overstated. Enter it in SETUP from a paystub.</span></div>`;
+      No withholding entered for ${esc(c.w2Missing.join(", "))}, so the amount owed is overstated. Enter it in Setup.</span></div>`;
   }
   for (const p of c.countedPayments) {
     const label = p.kind === "fed" ? "IRS payment" : `${esc(p.kind)} payment`;
@@ -283,7 +313,7 @@ function quarterlyHtml(c) {
         <thead><tr><th>Deadline</th><th>Covers</th><th>Suggested</th><th>Paid</th><th>Status</th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>
-      <div class="muted-note" style="margin-top:10px">W2 withholding counts as paid evenly across the year. Suggested amounts spread the remaining balance over the quarters left. Only payments applied to ${esc(data.year)} count.</div>
+      <div class="muted-note" style="margin-top:10px">Suggested amounts spread what is still owed over the remaining quarters.</div>
     </div>`;
 }
 
@@ -312,7 +342,7 @@ function sourcesHtml(c) {
       <thead><tr><th>Source</th><th>Treatment</th><th>State</th><th>Gross</th><th>Expenses</th><th>Est tax</th><th>Eff rate</th></tr></thead>
       <tbody>${rows}${totalRow}</tbody>
     </table></div>
-    <div class="muted-note" style="margin-top:10px">Tax allocated to each source in proportion to its income. State amounts include the resident state.</div>
+    <div class="muted-note" style="margin-top:10px">Federal and state split by income share. Self-employment tax on 1099 sources only.</div>
   </div>`;
 }
 
@@ -320,7 +350,7 @@ function expensesHtml() {
   const seSources = data.sources.filter((s) => (profile.treatments[s.category_id] || {}).treat === "se");
   if (!seSources.length) {
     return `<div class="card"><span class="label">Business expenses</span>
-      <p class="sub" style="margin:10px 0 0">No sources are set to 1099 self emp. Expenses only reduce self employment income.</p></div>`;
+      <p class="sub" style="margin:10px 0 0">No 1099 sources. Set one up in Setup to tag expenses.</p></div>`;
   }
   const tagged = data.expenseTxns || [];
   const bySource = seSources.map((s) => {
@@ -348,9 +378,9 @@ function expensesHtml() {
 
   return `<div class="card">
     <span class="label">Business expenses</span>
-    <p class="muted-note" style="margin:8px 0 12px">Tag real spending from your accounts as an expense against a 1099 source. Tagged amounts reduce both income tax and self employment tax. Deduct only true business costs.</p>
+    <p class="muted-note" style="margin:8px 0 12px">Tag spending as a business expense against a 1099 source. Real business costs only.</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <input type="search" id="exp-q" placeholder="Search spending: adobe, domain, flight" value="${esc(expQuery)}" style="flex:1;min-width:200px">
+      <input type="search" id="exp-q" placeholder="Search spending" value="${esc(expQuery)}" style="flex:1;min-width:200px">
       <button type="button" class="btn small" id="exp-go">Search</button>
     </div>
     ${results}
@@ -402,17 +432,17 @@ function setupHtml() {
         </select></div>
         <div class="field"><span class="label">Resident state</span><select id="set-res">${stateOptions(profile.res)}</select></div>
       </div>
-      <div class="muted-note">Not claimed as a dependent. The resident state taxes all income with credit for tax paid to work states.</div>
+      <div class="muted-note">Resident state taxes all income, with credit for tax paid to work states. Assumes you are not claimed as a dependent.</div>
     </div>
     <div class="card" style="margin-bottom:14px">
       <span class="label">Income sources</span>
       <div id="src-setup">${srcRows}</div>
-      <div class="muted-note" style="margin-top:10px">Gross comes from your income categories, read only. Withheld amounts come from your paystubs, enter them for W2 sources.</div>
+      <div class="muted-note" style="margin-top:10px">Gross is from your income categories. Enter withholding from paystubs for W2 sources.</div>
     </div>
     <div class="card">
       <span class="label">Tax payments found</span>
       <div id="pay-setup">${payRows}</div>
-      <div class="muted-note" style="margin-top:10px">Pulled from the Taxes category. A payment applied to a prior year filing does not count toward this year.</div>
+      <div class="muted-note" style="margin-top:10px">From the Taxes category. Payments applied to a prior year do not count.</div>
     </div>`;
 }
 
@@ -443,19 +473,14 @@ export default async function render(main) {
     <div class="pagehead">
       <div>
         <h1>Taxes</h1>
-        <div class="sub">${esc(data.year)} tax year ${MID} year to date</div>
+        <div class="sub">${esc(data.year)} ${MID} year to date</div>
       </div>
       <span class="pill dim mono">${owes ? "OWES " : "REFUND "}${fmt(Math.abs(c.net))}</span>
     </div>
-    <div class="card banner tax-banner">
-      <div>
-        <span class="label">Planning estimate only</span>
-        <div class="muted-note">Rough math from category totals and your inputs. Not tax advice, not a filing tool. Verify with a preparer.</div>
-      </div>
-    </div>
+    <div class="card banner tax-banner"><span class="label">Estimate only</span><span class="muted-note">Rough math from category totals, not tax advice.</span></div>
     <div class="chips tabrow" role="tablist" id="tax-tabs">
       ${["estimate", "quarterly", "sources", "expenses", "setup"].map((t) =>
-        `<button type="button" class="chip${tab === t ? " active" : ""}" data-tab="${t}" role="tab">${t.toUpperCase()}</button>`).join("")}
+        `<button type="button" class="chip${tab === t ? " active" : ""}" data-tab="${t}" role="tab">${t[0].toUpperCase() + t.slice(1)}</button>`).join("")}
     </div>
     <section id="tax-body">${body}</section>
   </div>`;

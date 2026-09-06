@@ -300,12 +300,11 @@ export default async function render(main) {
         : series.length >= 1
           ? `<p class="iv-err" style="margin:0">${filteredAcct
               ? `${esc(filteredAcct.name)} holds ${fmtMoneyWhole(filteredAcct.value)} right now and has no value history to chart.`
-              : "Portfolio value has been $0 for the whole recorded history."}</p>`
+              : "No value history yet."}</p>`
           : `<p class="iv-err" style="margin:0">No history yet. Daily snapshots start today.</p>`}
       ${needsBackfill ? `
       <div class="muted-note" style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <span>Rebuild past history from transactions:</span>
-        <button type="button" class="btn small" id="pf-backfill">Reconstruct history</button>
+        <button type="button" class="btn small" id="pf-backfill">Rebuild history</button>
         <span class="muted-note" id="pf-backfill-msg" role="status"${backfillLine ? "" : " hidden"}>${esc(backfillLine)}</span>
       </div>` : ""}
     </div>
@@ -345,7 +344,7 @@ export default async function render(main) {
         ${analysisBullets.length ? `<ul>${analysisBullets.map((b) => `<li>${esc(b)}</li>`).join("")}</ul>` : ""}
         <div class="by">by Claude${analysisDate ? ` ${MID} ${esc(analysisDate)}` : ""}${analysisAgeDays != null && analysisAgeDays > 14
           ? ` <span class="iv-stale">written ${esc(analysisDate)}, ${analysisAgeDays} days ago</span>` : ""}</div>
-      </div>` : `<p class="iv-err" style="margin:0">Run /invest-review in Claude Code to generate.</p>`}
+      </div>` : `<p class="iv-err" style="margin:0">No analysis yet. Generate one with /invest-review in Claude Code.</p>`}
     </div>
 
     <div class="card" style="margin-top:14px">
@@ -419,7 +418,7 @@ export default async function render(main) {
           <div class="muted-note" style="margin-top:2px">Annual RMDs may also apply under post-2024 rules.</div>
         </div>`;
         })() : ""}
-        ${!roth && !ira ? `<p class="sub" style="margin:0">Set Roth and IRA details in <a href="#/settings">Settings</a>.</p>` : ""}
+        ${!roth && !ira ? `<p class="sub" style="margin:0">No retirement accounts linked.</p>` : ""}
       </div>
     </div>
   </div>`;
@@ -527,8 +526,7 @@ export default async function render(main) {
       if (youD && youD.pct != null) {
         const spyPart = spyD && spyD.pct != null
           ? `S&amp;P 500 ${pctSpan(spyD.pct)}`
-          : `S&amp;P 500 ${MID} no benchmark data for this window`;
-        lines.push(`Value change ${pctSpan(youD.pct)} incl. contributions / ${spyPart}`);
+          : `S&amp;P 500 ${MID} no data for this window`;
         const from = pts[0].date, to = pts[pts.length - 1].date;
         const contrib = flows
           .filter((f) => f.date > from && f.date <= to)
@@ -539,8 +537,9 @@ export default async function render(main) {
           // is an estimate rather than a time-weighted figure.
           const denom = youD.first + contrib / 2;
           const gainPct = denom > 0 ? (gain / denom) * 100 : null;
-          lines.push(`Of which net contributions ${signedMoney(contrib)} ${MID} market gain ${signedMoney(gain)}`
-            + (gainPct != null ? ` (${pctSpan(gainPct)} approx)` : ""));
+          lines.push(`Return ${gainPct != null ? pctSpan(gainPct) : signedMoney(gain)} ${MID} ${spyPart} ${MID} contributions ${signedMoney(contrib)}`);
+        } else {
+          lines.push(`You ${pctSpan(youD.pct)} ${MID} ${spyPart}`);
         }
       }
       cmp.innerHTML = lines.map((l) => `<div>${l}</div>`).join("");
@@ -625,7 +624,7 @@ export default async function render(main) {
     const slot = document.getElementById("alloc-drill");
     if (!slot) return;
     if (!allocSel) {
-      slot.innerHTML = `<p class="iv-foot" style="margin-top:10px">Select a slice to see its holdings.</p>`;
+      slot.innerHTML = `<p class="iv-foot" style="margin-top:10px">Select a slice for its holdings.</p>`;
       return;
     }
     const seg = allocSegs.find((s) => s.key === allocSel);
@@ -850,7 +849,7 @@ export default async function render(main) {
           <div class="clist"></div>
         </div>`;
       }).join("") + `
-      <p class="iv-foot">Tick = S&amp;P 500 weight. Badge = 3+ pts off. Funds looked through${approx.length ? `. Approx: ${approx.map(esc).join(", ")}` : ""}.</p>
+      <p class="iv-foot">Tick marks are S&amp;P 500 weights. Badge: 3+ points off${approx.length ? `. Approximate: ${approx.map(esc).join(", ")}` : ""}.</p>
       ${unmapped.length ? `<p class="iv-foot">Unmapped: ${unmapped.map((u) => `${esc(u.ticker || u.name || "?")} (${fmtPct(u.pct)})`).join(", ")}.</p>` : ""}`;
 
       sbody.querySelectorAll(".iv-sector").forEach((btn) => btn.addEventListener("click", () => {
@@ -931,7 +930,7 @@ export default async function render(main) {
       </table>
       </div>
       ${spy ? `<div class="iv-spyline">S&amp;P 500 (SPY): 1M ${spy.r1m == null ? MID : signedPct(spy.r1m)} ${MID} 3M ${spy.r3m == null ? MID : signedPct(spy.r3m)} ${MID} 1Y ${spy.r1y == null ? MID : signedPct(spy.r1y)}</div>` : ""}
-      <p class="iv-foot">Yahoo data, cached daily. Not advice.</p>`;
+      <p class="iv-foot">Yahoo data, cached daily.</p>`;
   };
 
   // ------------------------------- S&P overlay (hero) + per-holding returns
@@ -958,7 +957,7 @@ export default async function render(main) {
         renderTable();
         const foot = document.getElementById("holdings-foot");
         if (foot) {
-          foot.textContent = "1D and 1M are market price returns from Yahoo, cached daily.";
+          foot.textContent = "1D and 1M from Yahoo, cached daily.";
           foot.hidden = false;
         }
       }

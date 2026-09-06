@@ -40,7 +40,7 @@
 
 @media (max-width: 880px) {
   /* 16px stops iOS zooming into the field on focus */
-  .amount-input, .rc-edit input, .rc-edit select { font-size: 16px; }
+  .amount-input, .rc-edit input, .rc-edit select { font-size: 16px; min-height: 40px; }
   .rowmenu { min-width: 32px; min-height: 32px; display: inline-flex; align-items: center; justify-content: center; }
   [data-cand] .who { flex-basis: 100%; }
   [data-cand] .rc-ctl { width: 100%; justify-content: flex-end; }

@@ -7,6 +7,8 @@ export interface Env {
   SESSION_SECRET: string;
   /** Comma-separated emails allowed through Cloudflare Access (defense in depth). */
   ALLOWED_EMAILS?: string;
+  /** Public URL of this deployment (Plaid redirect/webhook). Defaults to the request origin. */
+  APP_URL?: string;
 }
 
 /** Cloudflare Access context attached to the ExecutionContext when the Worker is protected by Access. */

@@ -475,8 +475,9 @@ export async function recurringCandidates(env: Env, dismissed: string[]): Promis
     // A stream that stopped more than 90 days ago is not worth suggesting.
     if (last(g.charges).date < addDays(today, -90)) continue;
     const strict = g.categoryName !== null && STRICT_CATEGORIES.has(g.categoryName);
+    const lenient = g.categoryName !== null && VARIABLE_CATEGORIES.has(g.categoryName);
     const amounts = g.charges.map((c) => c.amount);
-    if (!strict && Math.max(...amounts) - Math.min(...amounts) <= 0.2 * mean(amounts)) { summarize(g, g.charges); continue; }
+    if (lenient || (!strict && Math.max(...amounts) - Math.min(...amounts) <= 0.2 * mean(amounts))) { summarize(g, g.charges); continue; }
     const byCents = new Map<number, Charge[]>();
     for (const c of g.charges) {
       const k = Math.round(c.amount * 100);

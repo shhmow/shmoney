@@ -60,12 +60,10 @@ function paceLine(row, { isCurrent, isFuture, day, daysLeft }) {
   }
   const lm = row.lastMonthSpent != null ? Number(row.lastMonthSpent) : null;
   if (!isFuture && lm != null && (lm > 0 || spent > 0)) {
-    let cmp = `vs last month ${fmtMoneyWhole(lm)}`;
+    let cmp = `last month ${fmtMoneyWhole(lm)}`;
     if (lm > 0 && row.lastMonthDeltaPct != null && spent > 0) {
       const pct = Number(row.lastMonthDeltaPct);
-      cmp += pct === 0 ? " (same)" : ` (${pct > 0 ? "up" : "down"} ${Math.abs(pct)}%)`;
-    } else if (lm > 0 && spent === 0) {
-      cmp += " (nothing yet)";
+      cmp += pct === 0 ? ", same" : `, ${pct > 0 ? "up" : "down"} ${Math.abs(pct)}%`;
     }
     bits.push(cmp);
   }
@@ -187,7 +185,7 @@ export default async function render(main) {
 
     <div id="b-banner">
     ${showRollover ? `<div class="card banner">
-      <span class="sub">${esc(monthLabel(nextMonth))}'s budget hasn't been created yet. Create it now from your presets (default: copy this month).</span>
+      <span class="sub">No budget for ${esc(monthLabel(nextMonth))} yet.</span>
       <button type="button" class="btn small" id="b-rollover">Create ${esc(monthShort(nextMonth))} budget</button>
     </div>` : ""}
     </div>
@@ -208,14 +206,14 @@ export default async function render(main) {
             ? expenseCats.map((c) => editRow(c, rowByCat.get(String(c.id))?.budget, suggestions.get(String(c.id)))).join("") +
               `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;flex-wrap:wrap;gap:8px">
                  <span class="sub" id="b-sanity"></span>
-                 <span class="muted-note">Set an amount to 0 to remove a category's budget.</span>
+                 <span class="muted-note">0 removes a budget.</span>
                </div>`
-            : emptyState({ title: "No expense categories", body: "Add categories in Settings first, then budget against them.", actionLabel: "Go to Settings", actionHash: "#/settings" }))
+            : emptyState({ title: "No expense categories", body: "Add categories in Settings first.", actionLabel: "Settings", actionHash: "#/settings" }))
         : (hasBudget
             ? rows.filter((r) => Number(r.budget) > 0 || Number(r.spent) > 0).map((r) => viewRow(r, ctx)).join("")
             : emptyState({
                 title: "No budget for " + monthLabel(month),
-                body: "Set monthly targets per category. Suggestion chips from your own history make this quick.",
+                body: "Set a monthly amount per category.",
                 glyph: "bars",
               }) + `<div style="text-align:center;margin-top:-6px;padding-bottom:20px"><button type="button" class="btn primary" id="b-start">Set up budgets</button></div>`)}
     </div>
@@ -351,9 +349,9 @@ export default async function render(main) {
     const curType = row.preset_type || "";
     slot.innerHTML = `<div class="brow-settings">
       <label class="switch"><input type="checkbox" class="s-roll"${row.rollover ? " checked" : ""}><span class="knob"></span><span>Roll over what's left</span></label>
-      <label style="display:flex;gap:6px;align-items:center;font-size:13px;color:var(--ink-2)">Preset
+      <label style="display:flex;gap:6px;align-items:center;font-size:13px;color:var(--ink-2)">Next month starts at
         <select class="s-preset">
-          <option value=""${curType === "" ? " selected" : ""}>None (copy last month)</option>
+          <option value=""${curType === "" ? " selected" : ""}>Same as this month</option>
           ${Object.entries(PRESET_LABEL).map(([v, l]) => `<option value="${v}"${curType === v ? " selected" : ""}>${l}</option>`).join("")}
         </select>
       </label>
@@ -380,10 +378,10 @@ export default async function render(main) {
         row.rollover = body.rollover;
         row.preset_type = body.preset_type;
         row.preset_value = body.preset_value;
-        msg.textContent = "Preset saved.";
+        msg.textContent = "Saved.";
         const would = await presetPreview(row, body.preset_type, body.preset_value);
-        msg.textContent = `Preset saved. Applies when ${monthShort(nextMonthOf)} is created` +
-          (would != null ? ` (would be ${fmtMoneyWhole(would)} now).` : ".");
+        msg.textContent = `Saved. Applies to ${monthShort(nextMonthOf)}` +
+          (would != null ? ` (about ${fmtMoneyWhole(would)}).` : ".");
         setTimeout(() => { slot.innerHTML = ""; btn.setAttribute("aria-expanded", "false"); }, 4000);
       } catch (err) {
         saveBtn.disabled = false;
@@ -424,9 +422,9 @@ export default async function render(main) {
     modalWrap.innerHTML = `<div class="modal-backdrop">
       <div class="modal" role="dialog" aria-modal="true" aria-label="Rebalance budgets">
         <h2>Rebalance ${esc(monthLabel(month))}</h2>
-        <p class="sub" style="margin:0 0 12px">Reallocates your total (${fmtMoneyWhole(budgetTotal)}) across categories, weighted by your average spending over the last 3 months.${anyFloored ? ` Rows marked &#8224; were raised to what is already spent this month (rounded up to $5).` : ""}${totalChanged ? ` Spend already exceeds the total, so it rises to ${fmtMoneyWhole(previewTotal)}.` : ""}</p>
+        <p class="sub" style="margin:0 0 12px">Splits ${fmtMoneyWhole(budgetTotal)} across categories in proportion to the last 3 months of spending.${anyFloored ? ` &#8224; raised to what is already spent.` : ""}${totalChanged ? ` Total rises to ${fmtMoneyWhole(previewTotal)} to cover spending.` : ""}</p>
         <div class="table-wrap"><table>
-          <thead><tr><th>Category</th><th>Current</th><th>Spent</th><th>Proposed</th><th>&#916;</th></tr></thead>
+          <thead><tr><th>Category</th><th>Current</th><th>Spent</th><th>Proposed</th><th>Change</th></tr></thead>
           <tbody>
             ${pRows.map((r) => `<tr${r.over ? ' class="bg-reb-over"' : ""}>
               <td>${esc(r.name)}${r.floored ? ' <span class="bg-floored" title="Raised to spend so far this month">&#8224;</span>' : ""}</td>
@@ -439,7 +437,7 @@ export default async function render(main) {
         </table></div>
         <div class="modal-actions">
           <button type="button" class="btn" id="rb-cancel">Cancel</button>
-          <button type="button" class="btn" id="rb-future">From now on</button>
+          <button type="button" class="btn" id="rb-future">Every month</button>
           <button type="button" class="btn primary" id="rb-month">Apply this month</button>
         </div>
       </div>

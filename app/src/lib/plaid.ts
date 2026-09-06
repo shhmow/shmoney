@@ -4,8 +4,18 @@ import { nowIso } from "./format";
 import { syncItem } from "../sync";
 
 const PLAID_BASE = "https://production.plaid.com";
-const REDIRECT_URI = "https://shmoney.josephlove076.workers.dev/link/oauth";
-const WEBHOOK_URL = "https://shmoney.josephlove076.workers.dev/api/webhooks/plaid";
+
+/**
+ * Public origin of this deployment, for Plaid's OAuth redirect and webhook.
+ * APP_URL (a var/secret) wins; otherwise the origin the request arrived on.
+ * The redirect URI must also be registered in the Plaid dashboard.
+ */
+export function appOrigin(env: Env, requestUrl?: string): string {
+  const configured = (env.APP_URL ?? "").trim().replace(/\/+$/, "");
+  if (configured) return configured;
+  if (requestUrl) return new URL(requestUrl).origin;
+  throw new Error("APP_URL is not set and no request origin is available");
+}
 
 export class PlaidError extends Error {
   error_code: string;
@@ -57,13 +67,13 @@ export interface PlaidAccount {
   };
 }
 
-export async function createLinkToken(env: Env, opts?: { accessToken?: string }): Promise<string> {
+export async function createLinkToken(env: Env, opts: { accessToken?: string; origin: string }): Promise<string> {
   const body: Record<string, unknown> = {
     client_name: "shmoney",
     user: { client_user_id: "shmoney" },
     language: "en",
     country_codes: ["US"],
-    redirect_uri: REDIRECT_URI,
+    redirect_uri: `${opts.origin}/link/oauth`,
   };
   // Default history is ~90 days; request the maximum (2 years) on new links
   // and on update-mode relinks (which extends history for existing items).
@@ -77,7 +87,7 @@ export async function createLinkToken(env: Env, opts?: { accessToken?: string })
     // every bank that lacks investments (BofA, Amex, Discover).
     body.products = ["transactions"];
     body.required_if_supported_products = ["investments"];
-    body.webhook = WEBHOOK_URL;
+    body.webhook = `${opts.origin}/api/webhooks/plaid`;
   }
   const res = await plaidPost<{ link_token: string }>(env, "/link/token/create", body);
   return res.link_token;

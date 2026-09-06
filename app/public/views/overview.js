@@ -93,14 +93,13 @@ function recentRow(t, acctMap) {
 function thisMonthBody(cf, monthName, st) {
   const head = `<div class="fts-head"><div class="label">This month ${MID} ${esc(monthName)}</div></div>`;
   if (!cf) {
-    return head + `<p class="iv-err">Couldn't load cashflow ${MID} it'll be back on the next refresh.</p>`;
+    return head + `<p class="iv-err">Cash flow unavailable.</p>`;
   }
   const inc = Number(cf.totalIncome) || 0;
   const sp = Number(cf.totalSpending) || 0;
   if (inc === 0 && sp === 0) {
     return head + emptyState({
-      title: "Nothing in or out yet",
-      body: "Income vs spending fills in here as this month's transactions sync.",
+      title: "Nothing yet this month",
       glyph: "bars",
     });
   }
@@ -116,8 +115,9 @@ function thisMonthBody(cf, monthName, st) {
     ? `<div class="sub cfsaved">Saved <b class="pos">${fmtMoneyWhole(saved)}</b>${rate != null ? ` ${MID} ${rate}% of income` : ""}</div>`
     : `<div class="sub cfsaved"><span style="color:var(--warn)">${fmtMoneyWhole(Math.abs(saved))} more out than in</span> so far</div>`;
   const p = st && st.pace;
+  // A projection from the first few days is rent times thirty: wait for day 10.
   const paceLine = p && p.dayOfMonth >= 2
-    ? `<div class="sub" style="margin-top:6px"><b style="color:var(--ink)">${fmtMoneyWhole(p.perDay)}</b>/day${p.prevPerDay ? ` (last month ${fmtMoneyWhole(p.prevPerDay)})` : ""} ${MID} on pace for <b style="color:var(--ink)">${fmtMoneyWhole(p.projected)}</b>${p.prevSpend ? ` vs ${fmtMoneyWhole(p.prevSpend)} last month` : ""} ${MID} <a href="#/cashflow" style="color:var(--ink-2)">details</a></div>`
+    ? `<div class="sub" style="margin-top:6px"><b style="color:var(--ink)">${fmtMoneyWhole(p.perDay)}</b>/day${p.prevPerDay ? ` (last month ${fmtMoneyWhole(p.prevPerDay)})` : ""}${p.dayOfMonth >= 10 ? ` ${MID} on pace for <b style="color:var(--ink)">${fmtMoneyWhole(p.projected)}</b>${p.prevSpend ? ` vs ${fmtMoneyWhole(p.prevSpend)} last month` : ""}` : ""} ${MID} <a href="#/cashflow" style="color:var(--ink-2)">details</a></div>`
     : "";
   return `${head}
     <div class="cfbars">
@@ -152,8 +152,8 @@ function ftsBody(fts, monthName, recurring) {
   if (!hasBudget) {
     return `<div class="fts-head"><div class="label">Free to spend ${MID} ${esc(monthName)}</div></div>
       ${emptyState({
-        title: "Set monthly budgets to unlock Free to Spend",
-        body: "Once budgets are in, this shows what's actually safe to spend for the rest of the month, after upcoming bills.",
+        title: "No budget yet",
+        body: "Free to spend needs monthly budgets.",
         actionLabel: "Set up budgets",
         actionHash: "#/budget",
         glyph: "bars",
@@ -166,7 +166,7 @@ function ftsBody(fts, monthName, recurring) {
       <span class="sub">${daysLeft} day${daysLeft === 1 ? "" : "s"} left</span>
     </div>
     <div class="hero-num fts-num">${fmtMoneyWhole(fts.amount)}</div>
-    <div class="sub" id="fts-sub">after ${fmtMoneyWhole(upcoming)} of upcoming bills</div>
+    <div class="sub" id="fts-sub">${fmtMoneyWhole(fts.budgetTotal)} budget &#8722; ${fmtMoneyWhole(fts.spentTotal)} spent &#8722; ${fmtMoneyWhole(upcoming)} bills due</div>
     <figure class="fts-fig"><svg id="pace-chart" viewBox="0 0 420 130" role="img" aria-label="Cumulative spending this month versus even pace"></svg></figure>
     ${upcomingList(recurring)}`;
 }
@@ -200,9 +200,9 @@ export default async function render(main) {
     main.innerHTML = `<div class="page">
       <div class="pagehead"><div><div class="label">Net worth</div><div class="hero-num">$0</div></div></div>
       <div class="card">${emptyState({
-        title: "Welcome to shmoney",
-        body: "Link your first bank to pull in accounts, balances, and transactions. Everything on this page comes to life after your first sync.",
-        actionLabel: "Go to Settings → Link account",
+        title: "Welcome",
+        body: "Link a bank to get started.",
+        actionLabel: "Link an account",
         actionHash: "#/settings",
         glyph: "coins",
       })}</div>
@@ -216,7 +216,7 @@ export default async function render(main) {
   const prev = (Number(nw.current) || 0) - change;
   const pct = prev !== 0 ? Math.abs(change / prev) * 100 : 0;
   const fallbackDelta = change === 0
-    ? `<span class="sub">no change past month</span>`
+    ? `<span class="sub">flat past month</span>`
     : `<span class="delta ${change >= 0 ? "up" : "down"}">${change >= 0 ? "&#9650;" : "&#9660;"} ${fmtMoneyWhole(Math.abs(change))} (${fmtPct(pct)})</span> <span class="sub">past month</span>`;
 
   const series = Array.isArray(nw.series) ? nw.series : [];
@@ -239,8 +239,8 @@ export default async function render(main) {
     <div class="card">
       ${series.length >= 2
         ? `<figure><svg id="nw-chart" viewBox="0 0 900 240" role="img" aria-label="Net worth over time"></svg>
-           ${nw.fullFrom ? `<figcaption class="muted-note" style="margin-top:6px">Before ${esc(fmtDate(nw.fullFrom))} cash and card balances are rebuilt from transaction history; investments before linking are reconstructed from trades and prices.</figcaption>` : ""}</figure>`
-        : emptyState({ title: "Net worth chart is warming up", body: "Daily balance snapshots build this chart. Check back after a couple of syncs.", glyph: "chart" })}
+           ${nw.fullFrom ? `<figcaption class="muted-note" style="margin-top:6px">Before ${esc(fmtDate(nw.fullFrom))}, balances are rebuilt from transaction history.</figcaption>` : ""}</figure>`
+        : emptyState({ title: "Not enough history yet", body: "The chart fills in after a few daily syncs.", glyph: "chart" })}
     </div>
 
     ${groupBlock("Cash", groups.cash, "cash")}
@@ -255,11 +255,11 @@ export default async function render(main) {
     <div class="card" style="margin-top:14px">
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
         <div class="label">Recent activity</div>
-        <a class="sub" href="#/activity" style="text-decoration:none">See all &#8594;</a>
+        <a class="sub" href="#/activity" style="text-decoration:none">All</a>
       </div>
       ${recent.length
         ? recent.map((t) => recentRow(t, acctMap)).join("")
-        : emptyState({ title: "No transactions yet", body: "Recent activity across all accounts shows up here after your first sync.", glyph: "list" })}
+        : emptyState({ title: "No transactions yet", glyph: "list" })}
     </div>
   </div>`;
 
@@ -317,9 +317,9 @@ export default async function render(main) {
     const spent = Number(fts.spentTotal) || last;
     const ideal = (Number(fts.idealTotal) || Number(fts.budgetTotal) || 0) * today / days;
     const note = spent <= ideal
-      ? `${fmtMoneyWhole(spent)} spent by day ${today}; even pace would be ${fmtMoneyWhole(ideal)}`
-      : `${fmtMoneyWhole(spent)} spent by day ${today}, ${fmtMoneyWhole(spent - ideal)} over an even pace of ${fmtMoneyWhole(ideal)}`;
+      ? ""
+      : `${fmtMoneyWhole(spent - ideal)} ahead of an even pace`;
     const subEl = main.querySelector("#fts-sub");
-    if (subEl) subEl.innerHTML = `after ${fmtMoneyWhole(upcoming)} of upcoming bills ${MID} ${note}`;
+    if (subEl && spent > ideal) subEl.innerHTML += ` ${MID} <span style="color:var(--warn)">${note}</span>`;
   }
 }

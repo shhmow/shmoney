@@ -123,14 +123,15 @@ export default async function render(main) {
 
   const catName = new Map(categories.map((c) => [String(c.id), c.name]));
   const sVal = (k) => settings[k] != null && settings[k] !== "" ? settings[k] : "";
+  const hasIra = accounts.some((a) => String(a.subtype || "").toLowerCase() === "ira") || sVal("inherited_ira_year_of_death") !== "";
 
   main.innerHTML = `<div class="page">
-    <div class="pagehead"><h1>Accounts &amp; settings</h1></div>
+    <div class="pagehead"><h1>Settings</h1></div>
 
     <!-- institutions -->
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;gap:8px;flex-wrap:wrap">
-        <div class="label">Linked institutions</div>
+        <div class="label">Banks</div>
         <div style="display:flex;gap:8px">
           ${items.length ? `<button type="button" class="btn small" id="sync-all">Sync all</button>` : ""}
           <button type="button" class="btn primary small" id="link-new"${items.length >= MAX_CONNECTIONS ? " disabled" : ""}>Link account</button>
@@ -163,9 +164,9 @@ export default async function render(main) {
           </div>
         </div>`;
       }).join("")
-      : `<p class="sub" style="margin:10px 0 4px">Nothing linked yet. Connect your bank through Plaid to start syncing accounts, transactions, and holdings automatically.</p>`}
+      : `<p class="sub" style="margin:10px 0 4px">No banks linked yet.</p>`}
       </div>
-      <div class="sub" style="margin-top:10px">${items.length} of ${MAX_CONNECTIONS} connections used</div>
+      <div class="sub" style="margin-top:10px">${items.length} of ${MAX_CONNECTIONS} Plaid connections used</div>
       <div class="muted-note" id="inst-msg" style="margin-top:6px" hidden></div>
     </div>
 
@@ -199,14 +200,14 @@ export default async function render(main) {
 
       <div class="card">
         <div class="label" style="margin-bottom:8px">Rules</div>
-        <p class="sub" style="margin:0 0 10px">${rules.length} rule${rules.length === 1 ? "" : "s"} ${MID} merchant contains &#8594; category, applied on every sync.</p>
+        <p class="sub" style="margin:0 0 10px">Merchant contains &#8594; category. Applied on every sync.</p>
         <div id="rule-list">
           ${rules.length ? rules.map((r) => `
           <div class="txn" data-rule="${r.id}">
             <div class="who"><div class="m" style="font-size:13.5px">&#8220;${esc(r.match_value)}&#8221;</div>
               <div class="meta">&#8594; ${esc(catName.get(String(r.category_id)) || "Unknown")}</div></div>
             <button type="button" class="rowmenu" data-rule-del="${r.id}" aria-label="Delete rule">&#215;</button>
-          </div>`).join("") : `<p class="sub">No rules yet. Create them here or from a transaction's detail panel.</p>`}
+          </div>`).join("") : `<p class="sub">No rules yet.</p>`}
         </div>
         <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;align-items:center">
           <input id="rule-new-match" placeholder="Merchant contains" style="flex:1;min-width:120px" aria-label="Rule match text">
@@ -223,7 +224,7 @@ export default async function render(main) {
     <!-- bank links -->
     ${Object.keys(links).length ? `<div class="card" style="margin-top:14px">
       <div class="label" style="margin-bottom:4px">Bank links</div>
-      <p class="sub" style="margin:0 0 10px">Where "Open in bank" and "How to dispute" go from a transaction. Banks do not offer links to a single charge, so these open the logged-in activity page. Edit if your bank moves things.</p>
+      <p class="sub" style="margin:0 0 10px">Where &#8220;Open in bank&#8221; and &#8220;Dispute&#8221; go from a transaction.</p>
       ${Object.values(links).map((l) => `<div class="inst" data-link="${esc(l.key)}">
         ${BRANDS[l.brand] ? `<span class="brand-tile" style="width:30px;height:30px">${BRANDS[l.brand].svg}</span>` : ""}
         <div class="who" style="min-width:110px"><b>${esc(l.label)}</b><span class="sub">${esc(l.phone || "")}</span></div>
@@ -239,9 +240,9 @@ export default async function render(main) {
     <!-- maintenance -->
     <div class="card" style="margin-top:14px">
       <div class="label" style="margin-bottom:4px">Maintenance</div>
-      <p class="sub" style="margin:0 0 10px">Re-run categorization over everything already synced: rules, bank-category fallback, refund repair, and recurring detection.</p>
+      <p class="sub" style="margin:0 0 10px">Re-run rules and recurring detection over everything synced.</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <button type="button" class="btn small" id="recat">Re-apply rules &amp; fixes</button>
+        <button type="button" class="btn small" id="recat">Re-run rules</button>
         <button type="button" class="btn small" id="enrich">Fetch logos</button>
         <span class="muted-note" id="maint-msg" hidden></span>
       </div>
@@ -249,18 +250,18 @@ export default async function render(main) {
 
     <!-- settings fields -->
     <div class="card" style="margin-top:14px">
-      <div class="label" style="margin-bottom:12px">Numbers shmoney should know</div>
+      <div class="label" style="margin-bottom:12px">Planning numbers ${MID} optional</div>
       <div class="form-grid">
         <div class="field"><label class="label" for="s-income">Expected monthly income</label>
           <input id="s-income" type="number" min="0" step="1" value="${esc(sVal("expected_monthly_income"))}"></div>
-        <div class="field"><label class="label" for="s-roth-limit">Roth IRA contribution limit</label>
+        <div class="field"><label class="label" for="s-roth-limit">Roth IRA limit</label>
           <input id="s-roth-limit" type="number" min="0" step="1" value="${esc(sVal("roth_contribution_limit"))}"></div>
         <div class="field"><label class="label" for="s-roth-ytd">Roth contributed this year</label>
           <input id="s-roth-ytd" type="number" min="0" step="1" value="${esc(sVal("roth_contributed_ytd"))}"></div>
-        <div class="field"><label class="label" for="s-ira-year">Inherited IRA ${MID} year of death</label>
+        ${hasIra ? `<div class="field"><label class="label" for="s-ira-year">Inherited IRA ${MID} year of death</label>
           <input id="s-ira-year" type="number" min="1990" max="2100" step="1" value="${esc(sVal("inherited_ira_year_of_death"))}"></div>
         <div class="field"><label class="label" for="s-ira-start">Inherited IRA ${MID} starting balance</label>
-          <input id="s-ira-start" type="number" min="0" step="1" value="${esc(sVal("inherited_ira_starting_balance"))}"></div>
+          <input id="s-ira-start" type="number" min="0" step="1" value="${esc(sVal("inherited_ira_starting_balance"))}"></div>` : ""}
       </div>
       <div style="display:flex;gap:10px;align-items:center;margin-top:4px">
         <button type="button" class="btn primary small" id="s-save">Save settings</button>
@@ -272,15 +273,15 @@ export default async function render(main) {
     <div class="grid two" style="margin-top:14px">
       <div class="card">
         <div class="label" style="margin-bottom:8px">Data</div>
-        <p class="sub" style="margin:0 0 12px">Download everything shmoney knows as CSV.</p>
+        <p class="sub" style="margin:0 0 12px">CSV export.</p>
         <a class="btn" style="text-decoration:none;display:inline-block" href="/api/export/csv?table=transactions" download>Export transactions</a>
         <a class="btn" style="text-decoration:none;display:inline-block" href="/api/export/csv?table=holdings" download>Export holdings</a>
       </div>
       <div class="card">
         <div class="label" style="margin-bottom:8px">Session</div>
         <p class="sub" style="margin:0 0 12px">${authMode.mode === "access"
-          ? `Signed in through Cloudflare Access as <b>${esc(authMode.email)}</b>. No app password needed; sign-in is handled by Cloudflare.`
-          : "Signed in with the app password on this device. Sessions last 30 days."}</p>
+          ? `Signed in through Cloudflare Access as <b>${esc(authMode.email)}</b>.`
+          : "Signed in with the app password. Sessions last 30 days."}</p>
         <button type="button" class="btn" id="logout">Log out</button>
       </div>
     </div>
@@ -324,7 +325,7 @@ export default async function render(main) {
   main.querySelectorAll("[data-sync]").forEach((b) =>
     b.addEventListener("click", () => runSync(b, { item_id: Number(b.dataset.sync) })));
   main.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", async () => {
-    if (!confirm(`Remove ${b.dataset.name}? All of its accounts and transactions will be deleted from shmoney.`)) return;
+    if (!confirm(`Remove ${b.dataset.name} and all of its accounts and transactions?`)) return;
     b.disabled = true;
     try {
       await api.del(`/items/${b.dataset.del}`);
@@ -348,7 +349,7 @@ export default async function render(main) {
       btn.disabled = true;
       try {
         await api.patch(`/accounts/${encodeURIComponent(id)}`, body);
-        btn.textContent = "Saved"; flash("Nickname and limit saved. Shown everywhere on the next page load.");
+        btn.textContent = "Saved"; flash("Saved.");
         setTimeout(() => { btn.textContent = "Save"; }, 2500);
       } catch (err) { flash(err.message || "Save failed"); }
       btn.disabled = false;
@@ -399,7 +400,7 @@ export default async function render(main) {
     btn.disabled = false; btn.textContent = orig;
   };
   main.querySelector("#recat").addEventListener("click", (e) =>
-    maint(e.currentTarget, "/transactions/recategorize", { retroactive: true }, (r) => `Done. ${r.rulesApplied} rows touched by rules.`));
+    maint(e.currentTarget, "/transactions/recategorize", { retroactive: true }, (r) => `Done. ${r.rulesApplied} transactions updated.`));
   main.querySelector("#enrich").addEventListener("click", (e) =>
     maint(e.currentTarget, "/items/enrich", {}, (r) => `Institutions: ${r.institutions} ${MID} merchant logos: ${r.merchants.updated} of ${r.merchants.scanned}`));
 
@@ -471,17 +472,20 @@ export default async function render(main) {
   /* ---- settings fields ---- */
   main.querySelector("#s-save").addEventListener("click", async () => {
     const num = (id) => {
-      const v = main.querySelector(id).value;
-      return v === "" ? null : Number(v);
+      const el = main.querySelector(id);
+      if (!el) return undefined;
+      return el.value === "" ? null : Number(el.value);
     };
     try {
-      await api.put("/settings", {
+      const body = {
         expected_monthly_income: num("#s-income"),
         roth_contribution_limit: num("#s-roth-limit"),
         roth_contributed_ytd: num("#s-roth-ytd"),
         inherited_ira_year_of_death: num("#s-ira-year"),
         inherited_ira_starting_balance: num("#s-ira-start"),
-      });
+      };
+      Object.keys(body).forEach((k) => { if (body[k] === undefined) delete body[k]; });
+      await api.put("/settings", body);
       say("#s-msg", "Saved.");
     } catch (err) { say("#s-msg", err.message || "Save failed"); }
   });

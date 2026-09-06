@@ -23,6 +23,19 @@ function addDaysStr(date, n) {
   return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
 }
 
+// Paychecks are named by their income category ("SpaceX"), not the bank's
+// truncated descriptor ("Space Exploratio").
+function nameOf(r) {
+  if (isIncome(r) && r.category_name && r.category_name !== "Income") return r.category_name;
+  return r.merchant;
+}
+
+function daysLate(date) {
+  const [y, m, d] = String(date).split("-").map(Number);
+  const [ty, tm, td] = todayStr().split("-").map(Number);
+  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(y, m - 1, d)) / 86400000);
+}
+
 function row(r, i, { stale = false, ignored = false } = {}) {
   const cadence = cadenceOf(r);
   const amt = amountOf(r);
@@ -30,7 +43,7 @@ function row(r, i, { stale = false, ignored = false } = {}) {
   const meta = [cadence];
   if (r.next_date && !stale && !ignored) {
     meta.push(r.next_date < today
-      ? `<span class="rc-due">expected ${esc(fmtDate(r.next_date))}</span>`
+      ? `<span class="rc-due">expected ${esc(fmtDate(r.next_date))}, ${daysLate(r.next_date)} days late</span>`
       : `next ${esc(fmtDate(r.next_date))}`);
   }
   const lastDate = r.last_txn_date || r.last_date;
@@ -45,8 +58,8 @@ function row(r, i, { stale = false, ignored = false } = {}) {
   return `<div class="txn txn-plain${stale ? " rc-stale" : ""}" data-rec="${i}">
     <span class="dot">${merchantTile({ merchant_name: r.merchant, name: r.merchant, logo_url: r.logo_url, website: r.website })}</span>
     <div class="who">
-      <div class="m">${esc(r.merchant)}</div>
-      <div class="meta">${catChip(r.category_name, r.category_color)}<span>${meta.join(` ${MID} `)}</span></div>
+      <div class="m">${esc(nameOf(r))}</div>
+      <div class="meta">${isIncome(r) ? "" : catChip(r.category_name, r.category_color)}<span>${meta.join(` ${MID} `)}</span></div>
       <div class="slot-edit"></div>
     </div>
     ${amtCell}
@@ -102,7 +115,7 @@ export default async function render(main) {
       <div class="rc-upcoming">
         ${upcoming.map(({ r }) => `<div class="rc-up">
           <span class="rc-when">${esc(fmtDate(r.next_date))}</span>
-          <span class="rc-who">${esc(r.merchant)}${r.account_name ? `<span class="sub"> ${MID} ${esc(r.account_name)}</span>` : ""}</span>
+          <span class="rc-who">${esc(nameOf(r))}${r.account_name ? `<span class="sub"> ${MID} ${esc(r.account_name)}</span>` : ""}</span>
           <span class="amt${isIncome(r) ? " in" : ""}">${isIncome(r) ? "+" : ""}${fmtMoney(amountOf(r))}</span>
         </div>`).join("")}
         ${dueTotal > 0 ? `<div class="rc-total"><span class="sub">due by ${esc(fmtDate(horizon))}</span><b>${fmtMoney(dueTotal)}</b></div>` : ""}
@@ -120,7 +133,7 @@ export default async function render(main) {
           ${ignored.map(({ r, i }) => row(r, i, { ignored: true })).join("")}</details>` : "")
       ) : emptyState({
         title: "Nothing recurring yet",
-        body: "Subscriptions, bills, and paychecks show up here once a few months of transactions are in.",
+        body: "Bills, subscriptions, and paychecks appear after a few months of data.",
         actionLabel: "Link an account", actionHash: "#/settings", glyph: "loop",
       })}
     </div>
