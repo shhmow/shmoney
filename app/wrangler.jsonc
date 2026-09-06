@@ -6,6 +6,9 @@
   "observability": {
     "enabled": true
   },
+  "vars": {
+    "ALLOWED_EMAILS": "josephlove076@gmail.com"
+  },
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",

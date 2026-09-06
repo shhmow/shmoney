@@ -98,15 +98,16 @@ function accountCount(it) {
 }
 
 export default async function render(main) {
-  let items, categories, rules, settings, accounts, links;
+  let items, categories, rules, settings, accounts, links, authMode;
   try {
-    const [i, c, r, s, a, l] = await Promise.all([
+    const [i, c, r, s, a, l, am] = await Promise.all([
       api.get("/items"),
       api.get("/categories"),
       api.get("/rules"),
       api.get("/settings"),
       api.get("/accounts").catch(() => []),
       api.get("/items/links").catch(() => ({})),
+      api.get("/auth/mode").catch(() => ({ mode: "password" })),
     ]);
     items = Array.isArray(i) ? i : (i && i.items) || [];
     categories = Array.isArray(c) ? c : (c && c.categories) || [];
@@ -114,6 +115,7 @@ export default async function render(main) {
     settings = (s && (s.settings || s)) || {};
     accounts = Array.isArray(a) ? a : [];
     links = l || {};
+    authMode = am || { mode: "password" };
   } catch (err) {
     main.innerHTML = `<div class="page">${errorCard(err)}</div>`;
     return;
@@ -276,7 +278,9 @@ export default async function render(main) {
       </div>
       <div class="card">
         <div class="label" style="margin-bottom:8px">Session</div>
-        <p class="sub" style="margin:0 0 12px">Signed in on this device. Sessions last 30 days.</p>
+        <p class="sub" style="margin:0 0 12px">${authMode.mode === "access"
+          ? `Signed in through Cloudflare Access as <b>${esc(authMode.email)}</b>. No app password needed; sign-in is handled by Cloudflare.`
+          : "Signed in with the app password on this device. Sessions last 30 days."}</p>
         <button type="button" class="btn" id="logout">Log out</button>
       </div>
     </div>
@@ -485,6 +489,7 @@ export default async function render(main) {
   /* ---- logout ---- */
   main.querySelector("#logout").addEventListener("click", async () => {
     try { await api.post("/auth/logout"); } catch { /* session is gone either way */ }
+    if (authMode.mode === "access") { location.href = "/cdn-cgi/access/logout"; return; }
     location.reload();
   });
 }
