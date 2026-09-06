@@ -15,6 +15,21 @@
         "APP_PASSWORD:shmoney-dev"
       ],
       "port": 8787
+    },
+    {
+      "name": "shmoney-dev-8788",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "wrangler",
+        "dev",
+        "--port",
+        "8788",
+        "--config",
+        "app/wrangler.jsonc",
+        "--var",
+        "APP_PASSWORD:shmoney-dev"
+      ],
+      "port": 8788
     }
   ]
 }

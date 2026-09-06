@@ -162,8 +162,9 @@ overview.get("/", async (c) => {
   const ub = await first<{ v: number | null }>(
     env,
     `SELECT SUM(avg_amount) AS v FROM recurring
-     WHERE active = 1 AND avg_amount > 0 AND next_date > ?1 AND next_date < ?2
+     WHERE active = 1 AND kind = 'expense' AND avg_amount > 0 AND next_date > ?1 AND next_date < ?2
        AND NOT (cadence = 'monthly' AND last_date IS NOT NULL AND julianday(?1) - julianday(last_date) > 75)
+       AND NOT (cadence = 'biweekly' AND last_date IS NOT NULL AND julianday(?1) - julianday(last_date) > 59)
        AND NOT (cadence = 'weekly' AND last_date IS NOT NULL AND julianday(?1) - julianday(last_date) > 52)`,
     today,
     monthEndExcl(month),

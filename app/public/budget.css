@@ -27,17 +27,22 @@
 .rc-ignored summary::before { content: "\203A"; display: inline-block; width: 10px; transition: transform .15s; }
 .rc-ignored[open] summary::before { transform: rotate(90deg); }
 .rc-ignored .txn { opacity: .5; }
+.rc-edit { margin-top: 8px; }
+.rc-edit label.sub { display: flex; gap: 6px; align-items: center; }
 .rc-edit input[type="number"] { width: 90px; }
 .rc-edit input[type="date"] { font: inherit; font-size: 13px; }
-.rc-cand { flex-wrap: wrap; }
-.rc-cand .rc-cand-ctl { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
-.rc-cand .who { flex: 1 1 200px; }
+.rc-ctl { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; flex-shrink: 0; }
+.rc-suffix { font-weight: 400; font-size: 12px; color: var(--muted); margin-left: 1px; }
+.rc-permo { font-size: 11.5px; font-weight: 400; color: var(--muted); text-align: right; }
+.rc-due { color: var(--warn); }
+[data-cand] { flex-wrap: wrap; }
+[data-cand] .who { flex: 1 1 200px; }
 
 @media (max-width: 880px) {
   /* 16px stops iOS zooming into the field on focus */
   .amount-input, .rc-edit input, .rc-edit select { font-size: 16px; }
   .rowmenu { min-width: 32px; min-height: 32px; display: inline-flex; align-items: center; justify-content: center; }
-  .rc-cand .who { flex-basis: 100%; }
-  .rc-cand .rc-cand-ctl { width: 100%; justify-content: flex-end; }
+  [data-cand] .who { flex-basis: 100%; }
+  [data-cand] .rc-ctl { width: 100%; justify-content: flex-end; }
   .rc-upcoming .rc-up .rc-when { min-width: 70px; }
 }

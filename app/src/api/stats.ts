@@ -154,7 +154,7 @@ stats.get("/", async (c) => {
   const fixedRow = await first<{ v: number | null }>(
     env,
     `SELECT SUM(t.amount) AS v ${BASE} WHERE t.date >= ? AND t.date < ? AND ${SPEND_COND}
-       AND (COALESCE(t.merchant_name, t.name) IN (SELECT merchant FROM recurring WHERE active = 1)
+       AND (COALESCE(t.merchant_name, t.name) IN (SELECT merchant FROM recurring WHERE active = 1 AND kind = 'expense')
             OR c.name IN ('Housing', 'Bills & utilities', 'Subscriptions'))`,
     monthStart(month), monthEndExcl(month),
   );

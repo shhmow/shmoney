@@ -181,10 +181,11 @@ budgets.get("/:month/suggestions", async (c) => {
     c.env,
     `SELECT category_id AS cid, SUM(CASE cadence
        WHEN 'weekly' THEN avg_amount * 52.0 / 12
+       WHEN 'biweekly' THEN avg_amount * 26.0 / 12
        WHEN 'quarterly' THEN avg_amount / 3.0
        WHEN 'yearly' THEN avg_amount / 12.0
        ELSE avg_amount END) AS v FROM recurring
-     WHERE active = 1 AND avg_amount > 0 AND category_id IS NOT NULL
+     WHERE active = 1 AND kind = 'expense' AND avg_amount > 0 AND category_id IS NOT NULL
      GROUP BY category_id`,
   );
   const recurringMap = new Map<number, number>();
