@@ -1,0 +1,10 @@
+# Copy to .dev.vars for `npm run dev`. Never commit .dev.vars.
+APP_PASSWORD=change-me
+SESSION_SECRET=any-long-random-string
+# Plaid keys (Developers -> Keys). Dummies are fine for local UI work.
+PLAID_CLIENT_ID=your-plaid-client-id
+PLAID_SECRET=your-plaid-production-secret
+# Optional: emails allowed through Cloudflare Access, comma separated.
+# ALLOWED_EMAILS=you@example.com
+# Optional: public URL when it differs from the request origin.
+# APP_URL=https://shmoney.example.workers.dev
