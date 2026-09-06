@@ -80,16 +80,25 @@ export function institutionLinks(institutionId: string | null, institutionName: 
 }
 
 /**
- * Account-level brand override: a card can live under an institution that is
- * not its issuer (Discover cards sync via Capital One since 2025). The
- * account name is the reliable signal.
+ * Links follow the institution that services the account (Discover cards
+ * have synced and been paid through Capital One since the 2025 acquisition,
+ * so disputes go there too). Only the visual brand mark follows the card.
  */
 export function accountLinks(
-  accountName: string | null,
+  _accountName: string | null,
   institutionId: string | null,
   institutionName: string | null,
 ): InstitutionLinks | null {
-  const n = (accountName ?? "").toLowerCase();
-  if (n.includes("discover")) return byKey("discover");
   return institutionLinks(institutionId, institutionName);
+}
+
+/** Brand mark for an account: the card's own brand when recognizable, else the institution's. */
+export function accountBrand(
+  accountName: string | null,
+  institutionId: string | null,
+  institutionName: string | null,
+): string | null {
+  const n = (accountName ?? "").toLowerCase();
+  if (n.includes("discover")) return "discover";
+  return institutionLinks(institutionId, institutionName)?.brand ?? null;
 }

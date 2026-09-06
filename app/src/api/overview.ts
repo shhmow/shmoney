@@ -7,7 +7,7 @@ import {
   num,
   round2,
   todayStr,
-  currentMonth,
+  requestToday,
   daysInMonth,
   monthStart,
   monthEndExcl,
@@ -17,14 +17,14 @@ import {
   type Txn,
   type AccountRow,
 } from "./util";
-import { accountLinks } from "../lib/institutions";
+import { accountLinks, accountBrand } from "../lib/institutions";
 
 export const overview = new Hono<{ Bindings: Env }>();
 
 overview.get("/", async (c) => {
   const env = c.env;
-  const today = todayStr();
-  const month = currentMonth();
+  const today = requestToday(c);
+  const month = today.slice(0, 7);
 
   // --- Net worth: series from snapshots (assets minus liabilities), current from live balances.
   // Accounts were linked at different times (investments carry ~2y of
@@ -121,7 +121,7 @@ overview.get("/", async (c) => {
      FROM accounts WHERE hidden = 0`,
   );
   const current = round2(num(cur ? cur.v : 0));
-  const monthAgoDate = new Date();
+  const monthAgoDate = new Date(`${today}T12:00:00Z`);
   monthAgoDate.setUTCMonth(monthAgoDate.getUTCMonth() - 1);
   const cutoff = monthAgoDate.toISOString().slice(0, 10);
   let base = series.length > 0 ? series[0]!.value : current;
@@ -136,7 +136,11 @@ overview.get("/", async (c) => {
 
   // --- Account groups (hidden accounts excluded; loans grouped with credit).
   const accounts = (await q<AccountRow>(env, `${ACCOUNT_SELECT} WHERE a.hidden = 0 ORDER BY a.type, a.name`))
-    .map((a) => ({ ...a, brand: accountLinks(a.name, a.institution_id ?? null, a.institution_name ?? null)?.brand ?? null }));
+    .map((a) => ({
+      ...a,
+      brand: accountBrand(a.name, a.institution_id ?? null, a.institution_name ?? null),
+      links_key: accountLinks(a.name, a.institution_id ?? null, a.institution_name ?? null)?.key ?? null,
+    }));
   const cash = accounts.filter((a) => a.type === "depository");
   const credit = accounts.filter((a) => a.type === "credit" || a.type === "loan");
   const investments = accounts.filter((a) => a.type === "investment");
@@ -158,7 +162,9 @@ overview.get("/", async (c) => {
   const ub = await first<{ v: number | null }>(
     env,
     `SELECT SUM(avg_amount) AS v FROM recurring
-     WHERE active = 1 AND avg_amount > 0 AND next_date > ? AND next_date < ?`,
+     WHERE active = 1 AND avg_amount > 0 AND next_date > ?1 AND next_date < ?2
+       AND NOT (cadence = 'monthly' AND last_date IS NOT NULL AND julianday(?1) - julianday(last_date) > 75)
+       AND NOT (cadence = 'weekly' AND last_date IS NOT NULL AND julianday(?1) - julianday(last_date) > 52)`,
     today,
     monthEndExcl(month),
   );

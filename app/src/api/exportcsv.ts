@@ -53,6 +53,7 @@ exportcsv.get("/csv", async (c) => {
       pending: number;
       category: string | null;
       account: string;
+      nickname: string | null;
       mask: string | null;
       is_transfer: number;
       excluded: number;
@@ -61,7 +62,7 @@ exportcsv.get("/csv", async (c) => {
     }>(
       c.env,
       `SELECT t.id, t.date, t.name, t.merchant_name, t.amount, t.pending,
-              c.name AS category, a.name AS account, a.mask AS mask,
+              c.name AS category, a.name AS account, a.nickname AS nickname, a.mask AS mask,
               t.is_transfer, t.excluded, t.flagged, t.notes
        FROM transactions t
        LEFT JOIN categories c ON c.id = t.category_id
@@ -70,8 +71,8 @@ exportcsv.get("/csv", async (c) => {
       ...binds,
     );
     const csv = toCsv(
-      ["id", "date", "name", "merchant", "amount", "pending", "category", "account", "mask", "is_transfer", "excluded", "flagged", "notes"],
-      rows.map((r) => [r.id, r.date, r.name, r.merchant_name, r.amount, r.pending, r.category, r.account, r.mask, r.is_transfer, r.excluded, r.flagged, r.notes]),
+      ["id", "date", "name", "merchant", "amount", "direction", "signed_amount", "pending", "category", "account", "account_nickname", "mask", "is_transfer", "excluded", "flagged", "notes"],
+      rows.map((r) => [r.id, r.date, r.name, r.merchant_name, r.amount, r.amount > 0 ? "out" : "in", -r.amount, r.pending, r.category, r.account, r.nickname, r.mask, r.is_transfer, r.excluded, r.flagged, r.notes]),
     );
     const suffix = [p.from, p.to].filter(Boolean).join("_to_");
     return csvResponse(csv, suffix ? `transactions_${suffix}.csv` : "transactions.csv");

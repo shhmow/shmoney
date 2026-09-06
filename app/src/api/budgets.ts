@@ -11,8 +11,7 @@ import {
   bad,
   readJson,
   isMonth,
-  currentMonth,
-  todayStr,
+  requestToday,
   daysInMonth,
   addMonths,
   monthSpendByCategory,
@@ -23,8 +22,8 @@ type Pace = "ok" | "projected_over" | "over";
 
 export const budgets = new Hono<{ Bindings: Env }>();
 
-function monthParam(raw: string | undefined): string | null {
-  const m = raw ?? currentMonth();
+function monthParam(raw: string | undefined, today: string): string | null {
+  const m = raw ?? today.slice(0, 7);
   return isMonth(m) ? m : null;
 }
 
@@ -32,19 +31,20 @@ function monthParam(raw: string | undefined): string | null {
  * Day-of-month position for pace math: for the current month it is today's
  * day; past months count as complete; future months as day 0.
  */
-function elapsedDays(month: string): { day: number; dim: number } {
+function elapsedDays(month: string, today: string): { day: number; dim: number } {
   const dim = daysInMonth(month);
-  const cur = currentMonth();
-  if (month === cur) return { day: parseInt(todayStr().slice(8, 10), 10), dim };
+  const cur = today.slice(0, 7);
+  if (month === cur) return { day: parseInt(today.slice(8, 10), 10), dim };
   if (month < cur) return { day: dim, dim };
   return { day: 0, dim };
 }
 
 budgets.get("/", async (c) => {
-  const month = monthParam(c.req.query("month"));
+  const today = requestToday(c);
+  const month = monthParam(c.req.query("month"), today);
   if (!month) return bad(c, "month must be YYYY-MM");
-  const { day, dim } = elapsedDays(month);
-  const isCurrent = month === currentMonth();
+  const { day, dim } = elapsedDays(month, today);
+  const isCurrent = month === today.slice(0, 7);
   const daysLeft = Math.max(0, dim - day);
 
   const rows = await q<{
@@ -71,12 +71,14 @@ budgets.get("/", async (c) => {
   const out = rows.map((r) => {
     const budget = round2(num(r.budget));
     const sp = spent.get(r.category_id) ?? 0;
-    const projected = day >= 7 && day < dim ? round2((sp / Math.max(day, 1)) * dim) : sp;
+    const projected = day >= 3 && day < dim ? round2((sp / Math.max(day, 1)) * dim) : sp;
     const available = round2(budget - sp);
     let pace: Pace = "ok";
     if (budget > 0) {
       if (sp > budget) pace = "over";
-      else if (day >= 7 && projected > budget) pace = "projected_over";
+      // Early in the month a run-rate projection is noisy, so before day 7 flag
+      // only categories that have already burned most of the budget.
+      else if ((day >= 7 && projected > budget) || (day < 7 && sp >= 0.8 * budget)) pace = "projected_over";
       budgetedCount++;
       if (pace === "ok") onCount++;
     } else if (sp > 0) {
@@ -132,7 +134,7 @@ budgets.get("/", async (c) => {
 });
 
 budgets.put("/:month", async (c) => {
-  const month = monthParam(c.req.param("month"));
+  const month = monthParam(c.req.param("month"), requestToday(c));
   if (!month) return bad(c, "month must be YYYY-MM");
   const body = await readJson<{ rows?: { category_id?: number; amount?: number }[] }>(c);
   if (!body || !Array.isArray(body.rows)) return bad(c, "body must be { rows: [{category_id, amount}] }");
@@ -158,7 +160,7 @@ budgets.put("/:month", async (c) => {
 });
 
 budgets.get("/:month/suggestions", async (c) => {
-  const month = monthParam(c.req.param("month"));
+  const month = monthParam(c.req.param("month"), requestToday(c));
   if (!month) return bad(c, "month must be YYYY-MM");
   const prev = addMonths(month, -1);
 
@@ -200,7 +202,7 @@ budgets.get("/:month/suggestions", async (c) => {
 });
 
 budgets.post("/:month/move", async (c) => {
-  const month = monthParam(c.req.param("month"));
+  const month = monthParam(c.req.param("month"), requestToday(c));
   if (!month) return bad(c, "month must be YYYY-MM");
   const body = await readJson<{ from_category_id?: number; to_category_id?: number; amount?: number }>(c);
   if (!body) return bad(c, "invalid JSON body");
@@ -247,7 +249,7 @@ budgets.post("/:month/move", async (c) => {
 });
 
 budgets.post("/:month/rebalance", async (c) => {
-  const month = monthParam(c.req.param("month"));
+  const month = monthParam(c.req.param("month"), requestToday(c));
   if (!month) return bad(c, "month must be YYYY-MM");
   const body = (await readJson<{ apply?: boolean; scope?: "month" | "future" }>(c)) ?? {};
   const scope = body.scope === "future" ? "future" : "month";
@@ -268,7 +270,7 @@ budgets.post("/:month/rebalance", async (c) => {
   // Spend so far this month floors each proposal (a budget below what is
   // already spent would be breached the moment it is applied). Only months
   // that have started have spend to floor against.
-  const floorSpend = month <= currentMonth() ? await monthSpendByCategory(c.env, month) : new Map<number, number>();
+  const floorSpend = month <= requestToday(c).slice(0, 7) ? await monthSpendByCategory(c.env, month) : new Map<number, number>();
 
   const rows = current.map((r) => {
     const weight = weightSum > 0 ? (avg.get(r.category_id) ?? 0) / weightSum : 1 / current.length;
@@ -348,7 +350,7 @@ budgets.post("/:month/rebalance", async (c) => {
 });
 
 budgets.post("/:month/rollover", async (c) => {
-  const month = monthParam(c.req.param("month"));
+  const month = monthParam(c.req.param("month"), requestToday(c));
   if (!month) return bad(c, "month must be YYYY-MM");
   await rolloverBudgets(c.env, month);
   const count = await first<{ n: number }>(c.env, "SELECT COUNT(*) AS n FROM budgets WHERE month = ?", month);

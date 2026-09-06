@@ -138,7 +138,7 @@ cashflow.get("/", async (c) => {
   const nodes: SankeyNode[] = [];
   const links: SankeyLink[] = [];
   const hubValue = round2(Math.max(totalIncome, totalSpending));
-  nodes.push({ id: "hub", label: "Checking", value: hubValue, kind: "hub" });
+  nodes.push({ id: "hub", label: "All accounts", value: hubValue, kind: "hub" });
   for (const r of income) {
     if (r.amount <= 0) continue;
     const id = `in:${r.category}`;

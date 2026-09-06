@@ -28,7 +28,7 @@ function buildSankey(data) {
   }
   const nodes = [];
   const links = [];
-  const CENTER = "Cash";
+  const CENTER = "All accounts";
   income.forEach((i) => {
     const label = i.category || i.name || "Income";
     nodes.push({ name: label, value: i.amount });
@@ -73,7 +73,7 @@ async function drill(main, data, nid, nlabel) {
   if (nid === "hub") {
     const inc = Number(data.totalIncome) || 0, sp = Number(data.totalSpending) || 0;
     panel.innerHTML = `<div style="border-top:1px solid var(--line, #232a27);margin-top:14px;padding-top:12px">
-      ${head("Checking", periodLabel())}
+      ${head("All accounts", periodLabel())}
       <div class="grid two" style="gap:18px">
         <div><div class="sub" style="margin-bottom:6px">IN</div>${(data.income || []).map((r) => `<div style="display:flex;justify-content:space-between;padding:3px 0"><span>${esc(r.category)}</span><span class="mono">${fmtMoneyWhole(r.amount)}</span></div>`).join("")}
           <div style="display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid var(--line);margin-top:4px"><b>Total in</b><b class="mono">${fmtMoneyWhole(inc)}</b></div></div>

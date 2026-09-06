@@ -13,6 +13,8 @@ import {
   hasOwn,
   TXN_SELECT,
   TXN_JOIN,
+  SPEND_COND,
+  INCOME_COND,
   applyRules,
   applyPlaidCategoryFallback,
   detectRecurring,
@@ -82,19 +84,28 @@ transactions.get("/", async (c) => {
     limit,
     offset,
   );
-  const tot = await first<{ n: number; out: number | null; inn: number | null }>(
+  const tot = await first<{ n: number; out: number | null; inn: number | null; spend: number | null; tout: number | null; tin: number | null; income: number | null }>(
     c.env,
     `SELECT COUNT(*) AS n,
             SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) AS out,
-            SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS inn
+            SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) AS inn,
+            SUM(CASE WHEN ${SPEND_COND} THEN t.amount ELSE 0 END) AS spend,
+            SUM(CASE WHEN t.amount > 0 AND (t.is_transfer = 1 OR c.kind = 'transfer') THEN t.amount ELSE 0 END) AS tout,
+            SUM(CASE WHEN t.amount < 0 AND (t.is_transfer = 1 OR c.kind = 'transfer') THEN -t.amount ELSE 0 END) AS tin,
+            SUM(CASE WHEN ${INCOME_COND} THEN -t.amount ELSE 0 END) AS income
      ${TXN_JOIN}${where}`,
     ...binds,
   );
+  const r2 = (v: unknown) => Math.round(num(v) * 100) / 100;
   return c.json({
     transactions: rows,
     total: num(tot ? tot.n : 0),
-    sumOut: Math.round(num(tot ? tot.out : 0) * 100) / 100,
-    sumIn: Math.round(num(tot ? tot.inn : 0) * 100) / 100,
+    sumOut: r2(tot?.out),
+    sumIn: r2(tot?.inn),
+    spending: r2(tot?.spend),
+    transfersOut: r2(tot?.tout),
+    transfersIn: r2(tot?.tin),
+    income: r2(tot?.income),
   });
 });
 

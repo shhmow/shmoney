@@ -229,6 +229,7 @@ export default async function render(main) {
         <input class="l-dispute" value="${esc(l.dispute)}" aria-label="${esc(l.label)} dispute URL" style="flex:2;min-width:180px" placeholder="Dispute URL">
         <input class="l-phone" value="${esc(l.phone || "")}" aria-label="${esc(l.label)} phone" style="width:130px" placeholder="Phone">
         <button type="button" class="btn small l-save">Save</button>
+        <button type="button" class="btn small l-reset" title="Back to the built-in default">Reset</button>
         <span class="muted-note l-msg"></span>
       </div>`).join("")}
     </div>` : ""}
@@ -335,12 +336,18 @@ export default async function render(main) {
     const id = row.dataset.acct;
     const msg = row.querySelector(".acct-msg");
     const flash = (t) => { msg.textContent = t; setTimeout(() => { msg.textContent = ""; }, 3000); };
-    row.querySelector(".acct-save").addEventListener("click", async () => {
+    row.querySelector(".acct-save").addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
       const body = { nickname: row.querySelector(".nick").value.trim() || null };
       const lim = row.querySelector(".lim");
       if (lim && !lim.disabled) body.manual_limit = lim.value === "" ? null : Number(lim.value);
-      try { await api.patch(`/accounts/${encodeURIComponent(id)}`, body); flash("Saved"); }
-      catch (err) { flash(err.message || "Save failed"); }
+      btn.disabled = true;
+      try {
+        await api.patch(`/accounts/${encodeURIComponent(id)}`, body);
+        btn.textContent = "Saved"; flash("Nickname and limit saved. Shown everywhere on the next page load.");
+        setTimeout(() => { btn.textContent = "Save"; }, 2500);
+      } catch (err) { flash(err.message || "Save failed"); }
+      btn.disabled = false;
     });
     row.querySelector(".acct-hide").addEventListener("click", async () => {
       const a = accounts.find((x) => String(x.id) === String(id));
@@ -350,21 +357,35 @@ export default async function render(main) {
   });
 
   /* ---- bank link overrides ---- */
-  main.querySelectorAll("[data-link]").forEach((row) => row.querySelector(".l-save").addEventListener("click", async () => {
+  const readOverrides = () => { try { return settings.inst_links ? JSON.parse(settings.inst_links) : {}; } catch { return {}; } };
+  main.querySelectorAll("[data-link]").forEach((row) => {
     const key = row.dataset.link;
     const msg = row.querySelector(".l-msg");
-    let overrides = {};
-    try { overrides = settings.inst_links ? JSON.parse(settings.inst_links) : {}; } catch { overrides = {}; }
-    overrides[key] = {
-      activity: row.querySelector(".l-activity").value.trim(),
-      dispute: row.querySelector(".l-dispute").value.trim(),
-      phone: row.querySelector(".l-phone").value.trim(),
-    };
-    try {
-      settings = await api.put("/settings", { inst_links: JSON.stringify(overrides) });
-      msg.textContent = "Saved"; setTimeout(() => { msg.textContent = ""; }, 3000);
-    } catch (err) { msg.textContent = err.message || "Save failed"; }
-  }));
+    const saveBtn = row.querySelector(".l-save");
+    saveBtn.addEventListener("click", async () => {
+      const overrides = readOverrides();
+      overrides[key] = {
+        activity: row.querySelector(".l-activity").value.trim(),
+        dispute: row.querySelector(".l-dispute").value.trim(),
+        phone: row.querySelector(".l-phone").value.trim(),
+      };
+      saveBtn.disabled = true;
+      try {
+        settings = await api.put("/settings", { inst_links: JSON.stringify(overrides) });
+        saveBtn.textContent = "Saved"; msg.textContent = "Links saved.";
+        setTimeout(() => { saveBtn.textContent = "Save"; msg.textContent = ""; }, 3000);
+      } catch (err) { msg.textContent = err.message || "Save failed"; }
+      saveBtn.disabled = false;
+    });
+    row.querySelector(".l-reset").addEventListener("click", async () => {
+      const overrides = readOverrides();
+      delete overrides[key];
+      try {
+        settings = await api.put("/settings", { inst_links: JSON.stringify(overrides) });
+        refreshView();
+      } catch (err) { msg.textContent = err.message || "Reset failed"; }
+    });
+  });
 
   /* ---- maintenance ---- */
   const maint = async (btn, path, body, done) => {

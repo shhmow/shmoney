@@ -2,11 +2,11 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
 import { q, first, run, bad, notFound, readJson, hasOwn, ACCOUNT_SELECT, type AccountRow } from "./util";
-import { accountLinks } from "../lib/institutions";
+import { accountLinks, accountBrand } from "../lib/institutions";
 
 function withBrand(a: AccountRow): AccountRow {
   const l = accountLinks(a.name, a.institution_id ?? null, a.institution_name ?? null);
-  return { ...a, brand: l ? l.brand : null };
+  return { ...a, brand: accountBrand(a.name, a.institution_id ?? null, a.institution_name ?? null), links_key: l ? l.key : null };
 }
 
 export const accounts = new Hono<{ Bindings: Env }>();

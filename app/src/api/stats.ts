@@ -4,8 +4,8 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
 import {
-  q, first, num, round2, bad, isMonth, currentMonth, addMonths, monthStart, monthEndExcl,
-  daysInMonth, todayStr, SPEND_COND, INCOME_COND,
+  q, first, num, round2, bad, isMonth, addMonths, monthStart, monthEndExcl,
+  daysInMonth, requestToday, SPEND_COND, INCOME_COND,
 } from "./util";
 
 export const stats = new Hono<{ Bindings: Env }>();
@@ -14,6 +14,8 @@ const BASE = "FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
 
 stats.get("/", async (c) => {
   const env = c.env;
+  const today = requestToday(c);
+  const currentMonth = () => today.slice(0, 7);
   const month = c.req.query("month") ?? currentMonth();
   if (!isMonth(month)) return bad(c, "month must be YYYY-MM");
   const range = c.req.query("range"); // optional: ytd | 1y -> leaderboard window
@@ -25,7 +27,6 @@ stats.get("/", async (c) => {
   const prevTo = monthStart(month);
   const yoyFrom = monthStart(addMonths(month, -12));
   const yoyTo = monthEndExcl(addMonths(month, -12));
-  const today = todayStr();
   const isCurrent = month === currentMonth();
   const dim = daysInMonth(month);
   const dayOfMonth = isCurrent ? parseInt(today.slice(8, 10), 10) : dim;
@@ -141,9 +142,13 @@ stats.get("/", async (c) => {
     const inc = round2(num(r.income)), sp = round2(num(r.spending));
     return { month: r.m, income: inc, spending: sp, net: round2(inc - sp), rate: inc > 0 ? round2((inc - sp) / inc * 100) : null, count: num(r.n) };
   });
-  const avgSpend = months.length ? round2(months.reduce((s, m) => s + m.spending, 0) / months.length) : 0;
-  const sortedSp = months.map((m) => m.spending).sort((a, b) => a - b);
-  const medianSpend = sortedSp.length ? round2(sortedSp[Math.floor(sortedSp.length / 2)]) : 0;
+  // Typical month: full months only (a 6-day month is not a month), true median.
+  const fullMonths = months.filter((m) => !(isCurrent && m.month === month && dayOfMonth < dim));
+  const avgSpend = fullMonths.length ? round2(fullMonths.reduce((s, m) => s + m.spending, 0) / fullMonths.length) : 0;
+  const sortedSp = fullMonths.map((m) => m.spending).sort((a, b) => a - b);
+  const medianSpend = sortedSp.length === 0 ? 0
+    : sortedSp.length % 2 === 1 ? round2(sortedSp[(sortedSp.length - 1) / 2])
+    : round2((sortedSp[sortedSp.length / 2 - 1] + sortedSp[sortedSp.length / 2]) / 2);
 
   // --- fixed vs variable: recurring merchants + housing count as fixed
   const fixedRow = await first<{ v: number | null }>(
@@ -181,7 +186,7 @@ stats.get("/", async (c) => {
       daily: daily.map((r) => ({ date: r.d, amount: round2(num(r.v)) })),
     },
     weekdays,
-    months, avgSpend, medianSpend,
+    months, avgSpend, medianSpend, typicalMonths: fullMonths.length,
     leftOut: leftOut.map((r) => ({ ...r, inflow: round2(num(r.inflow)), outflow: round2(num(r.outflow)) })),
   });
 });

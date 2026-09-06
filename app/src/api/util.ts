@@ -23,6 +23,19 @@ export const currentMonth = (): string => todayStr().slice(0, 7);
 export const isMonth = (s: string): boolean => /^\d{4}-\d{2}$/.test(s);
 export const isDate = (s: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(s);
 
+/**
+ * The client's local calendar date (sent as ?today=YYYY-MM-DD by lib/api.js),
+ * accepted when it is within two days of UTC today; otherwise UTC. Keeps "day
+ * 6 of 30" consistent across views when the server is already on tomorrow.
+ */
+export function requestToday(c: Context): string {
+  const t = c.req.query("today") ?? "";
+  if (!isDate(t)) return todayStr();
+  const diff = Math.abs(Date.parse(`${t}T00:00:00Z`) - Date.parse(`${todayStr()}T00:00:00Z`));
+  return diff <= 2 * 86400_000 ? t : todayStr();
+}
+export const requestMonth = (c: Context): string => requestToday(c).slice(0, 7);
+
 export function addMonths(month: string, delta: number): string {
   const y = parseInt(month.slice(0, 4), 10);
   const m = parseInt(month.slice(5, 7), 10) - 1 + delta;
@@ -129,6 +142,7 @@ export interface AccountRow {
   institution_url?: string | null;
   has_logo?: number;
   brand?: string | null;
+  links_key?: string | null;
 }
 
 export const ACCOUNT_COLS =

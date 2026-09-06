@@ -70,9 +70,17 @@ async function request(path, { method = "GET", body } = {}, retried = false) {
     opts.headers["content-type"] = "application/json";
     opts.body = JSON.stringify(body);
   }
+  let url = "/api" + path;
+  if (method === "GET" && !/[?&]today=/.test(url)) {
+    // Local calendar date, so server-side "day N of the month" math matches the
+    // user's clock instead of UTC (which flips to tomorrow at 8pm Eastern).
+    const d = new Date();
+    const local = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    url += (url.includes("?") ? "&" : "?") + "today=" + local;
+  }
   let res;
   try {
-    res = await fetch("/api" + path, opts);
+    res = await fetch(url, opts);
   } catch {
     throw new Error("Network error — are you offline?");
   }

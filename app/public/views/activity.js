@@ -4,7 +4,7 @@ import {
   esc, fmtMoney, fmtMoneyWhole, catChip, dateHead, fmtDate, txnAmount, emptyState, errorCard,
   debounce, currentMonth, shiftMonth, MID,
 } from "../lib/format.js";
-import { instTile, networkBadge, merchantTile, merchantLabel, brandOf, BRANDS } from "../lib/brand.js";
+import { instTile, networkBadge, merchantTile, merchantLabel, brandOf, plaidTagLabel } from "../lib/brand.js";
 
 // Accounts that actually carry transactions (investment/loan accounts do not).
 const isTxnAccount = (a) => a.type === "depository" || a.type === "credit";
@@ -32,18 +32,35 @@ let categories = [];
 let bankLinks = {};
 const acctById = () => new Map(accounts.map((a) => [String(a.id), a]));
 
-/** Read ?account=… / ?q=… from the hash once (deep links from Overview). */
+/**
+ * Filters live in the hash query (`#/activity?account=…&q=…`) so a reload,
+ * back button or shared link restores the same view. A deep link replaces the
+ * whole filter set (an Overview card should not inherit a stale category).
+ * Written back with replaceState so the router's hashchange never re-fires.
+ */
 function applyHashParams() {
   const qs = location.hash.split("?")[1];
   if (!qs) return;
   const p = new URLSearchParams(qs);
+  state.q = p.get("q") || "";
+  state.categoryId = p.get("category") || "";
+  state.from = p.get("from") || "";
+  state.to = p.get("to") || "";
+  state.flagged = p.get("flagged") === "1";
   if (p.get("account")) { state.mode = "byacct"; state.accountId = p.get("account"); }
-  if (p.has("q")) state.q = p.get("q") || "";
-  if (p.has("category")) state.categoryId = p.get("category") || "";
-  if (p.has("from")) state.from = p.get("from") || "";
-  if (p.has("to")) state.to = p.get("to") || "";
-  if (p.get("flagged") === "1") state.flagged = true;
-  history.replaceState({}, "", "#/activity");
+  else if (p.get("mode") === "all") { state.mode = "all"; }
+}
+
+function syncHash() {
+  const p = new URLSearchParams();
+  if (state.mode === "byacct" && state.accountId) p.set("account", state.accountId);
+  if (state.q) p.set("q", state.q);
+  if (state.categoryId) p.set("category", state.categoryId);
+  if (state.from) p.set("from", state.from);
+  if (state.to) p.set("to", state.to);
+  if (state.flagged) p.set("flagged", "1");
+  const qs = p.toString();
+  history.replaceState({}, "", "#/activity" + (qs ? "?" + qs : ""));
 }
 
 function query() {
@@ -111,10 +128,13 @@ function acctHeader(a) {
   const bal = Number(a.current_balance ?? a.balance ?? 0);
   const shown = a.type === "credit" ? -Math.abs(bal) : bal;
   const u = a.type === "credit" ? utilization(a) : null;
-  const avail = a.type === "credit" && a.available_balance != null
-    ? `<span class="sub">${fmtMoneyWhole(a.available_balance)} available</span>` : "";
-  const bank = bankLinks[brandOf(a)] || null;
+  // The bank's own "available" already nets pending charges; only show it
+  // when there is no limit to derive it from (two numbers for one idea confuse).
+  const avail = a.type === "credit" && !u && a.available_balance != null
+    ? `<span class="sub">${fmtMoneyWhole(a.available_balance)} available (bank)</span>` : "";
+  const bank = bankLinks[a.links_key || brandOf(a)] || null;
   const open = bank ? `<a class="btn small" href="${esc(bank.activity)}" target="_blank" rel="noopener">Open in ${esc(bank.label)} &#8599;</a>` : "";
+  const phone = bank && bank.phone ? `<a class="sub" href="tel:${esc(bank.phone.replace(/[^0-9+]/g, ""))}" style="text-decoration:none">${esc(bank.label)} ${esc(bank.phone)}</a>` : "";
   return `<div class="acct-head" id="acct-head">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       ${instTile(a, { size: 38 })}
@@ -130,9 +150,10 @@ function acctHeader(a) {
     </div>
     ${u ? `<div class="util" style="margin-top:10px;max-width:420px">
       <div class="track"><div class="fill ${u.cls}" style="width:${Math.min(100, u.pct).toFixed(1)}%"></div></div>
-      <div class="sub"><span>${Math.round(u.pct)}% of ${fmtMoneyWhole(u.limit)} limit${a.manual_limit && !a.credit_limit ? " (set manually)" : ""}</span><span>${fmtMoneyWhole(Math.max(0, u.limit - u.bal))} left</span></div>
+      <div class="sub"><span>${Math.round(u.pct)}% of ${fmtMoneyWhole(u.limit)} limit${a.manual_limit && !a.credit_limit ? " (set manually)" : ""}</span><span>${fmtMoneyWhole(Math.max(0, u.limit - u.bal))} left${a.available_balance != null && Math.abs(Number(a.available_balance) - (u.limit - u.bal)) > 1 ? ` ${MID} bank says ${fmtMoneyWhole(a.available_balance)}` : ""}</span></div>
     </div>` : a.type === "credit" ? `<div class="sub" style="margin-top:8px">No credit limit reported ${MID} <a href="#/settings" style="color:var(--ink-2)">set one in Settings</a> to see utilization.</div>` : ""}
     <div id="acct-month" class="sub" style="margin-top:8px"></div>
+    ${phone ? `<div style="margin-top:4px">${phone}</div>` : ""}
   </div>`;
 }
 
@@ -177,8 +198,15 @@ function exportHref() {
 function totalsLine() {
   if (!state.transactions.length) return "";
   const parts = [`${state.total} transaction${state.total === 1 ? "" : "s"}`];
-  if (state.sumOut > 0) parts.push(`<b>${fmtMoneyWhole(state.sumOut)}</b> out`);
-  if (state.sumIn > 0) parts.push(`<b class="pos">${fmtMoneyWhole(state.sumIn)}</b> in`);
+  const tOut = state.transfersOut || 0, tIn = state.transfersIn || 0;
+  if (state.sumOut > 0) {
+    const detail = tOut > 0 ? ` <span class="sub">(${fmtMoneyWhole(state.spending || 0)} spending, ${fmtMoneyWhole(tOut)} transfers${state.sumOut - (state.spending || 0) - tOut > 1 ? ", rest excluded/refund-type" : ""})</span>` : "";
+    parts.push(`<b>${fmtMoneyWhole(state.sumOut)}</b> out${detail}`);
+  }
+  if (state.sumIn > 0) {
+    const detail = tIn > 0 ? ` <span class="sub">(${fmtMoneyWhole(state.income || 0)} income, ${fmtMoneyWhole(tIn)} transfers)</span>` : "";
+    parts.push(`<b class="pos">${fmtMoneyWhole(state.sumIn)}</b> in${detail}`);
+  }
   if (state.sumOut > 0 && state.sumIn > 0) {
     const net = state.sumIn - state.sumOut;
     parts.push(`net <b class="${net >= 0 ? "pos" : ""}">${fmtMoney(net, { cents: false })}</b>`);
@@ -219,6 +247,10 @@ async function fetchPage(append = false) {
   state.total = (res && res.total) || txns.length;
   state.sumOut = Number(res && res.sumOut) || 0;
   state.sumIn = Number(res && res.sumIn) || 0;
+  state.spending = Number(res && res.spending) || 0;
+  state.transfersOut = Number(res && res.transfersOut) || 0;
+  state.transfersIn = Number(res && res.transfersIn) || 0;
+  state.income = Number(res && res.income) || 0;
   state.transactions = append ? state.transactions.concat(txns) : txns;
 }
 
@@ -237,8 +269,7 @@ export function openDetail(t, onSaved) {
   const existing = document.getElementById("txn-sheet-wrap");
   if (existing) existing.remove();
   const acct = acctById().get(String(t.account_id));
-  const brand = acct ? brandOf(acct) : null;
-  const bank = brand ? bankLinks[brand] : null;
+  const bank = acct ? (bankLinks[acct.links_key || brandOf(acct)] || null) : null;
   const isCharge = Number(t.amount) > 0;
 
   const wrap = document.createElement("div");
@@ -260,7 +291,7 @@ export function openDetail(t, onSaved) {
         <span class="k">Descriptor</span><span class="v">${esc(t.name || MID)}</span>
         ${t.merchant_name && t.merchant_name !== merchant ? `<span class="k">Merchant</span><span class="v">${esc(t.merchant_name)}</span>` : ""}
         <span class="k">Status</span><span class="v">${t.pending ? "Pending" : "Posted"}${t.payment_channel ? ` ${MID} ${esc(t.payment_channel)}` : ""}</span>
-        ${t.plaid_category ? `<span class="k">Bank tag</span><span class="v">${esc(String(t.plaid_category).toLowerCase().replace(/_/g, " "))}</span>` : ""}
+        ${t.plaid_category ? `<span class="k">Bank tag</span><span class="v" title="How the bank's data provider classified this charge">${esc(plaidTagLabel(t.plaid_category))}</span>` : ""}
         ${t.website ? `<span class="k">Website</span><span class="v"><a href="https://${esc(String(t.website).replace(/^https?:\/\//, ""))}" target="_blank" rel="noopener">${esc(t.website)}</a></span>` : ""}
         ${acct && acct.mask ? `<span class="k">Account</span><span class="v">${esc(acct.name)} ${MID}${MID}${esc(acct.mask)}</span>` : ""}
       </div>
@@ -345,8 +376,9 @@ export function openDetail(t, onSaved) {
       el.innerHTML = `<div class="label">Other charges from this merchant</div><div class="sub" style="margin-top:4px">First time this merchant shows up.</div>`;
       return;
     }
+    const others = Math.max(0, (r.count || 0) - 1);
     el.innerHTML = `<div class="label">Other charges from this merchant</div>
-      <div class="sub" style="margin:4px 0 6px">${r.count} total ${MID} ${fmtMoneyWhole(r.total)} spent${r.first ? ` since ${esc(fmtDate(r.first))}` : ""}</div>
+      <div class="sub" style="margin:4px 0 6px">${others} other${others === 1 ? "" : "s"} ${MID} ${fmtMoneyWhole(r.total)} spent in total including this one${r.first ? ` since ${esc(fmtDate(r.first))}` : ""}</div>
       ${rows.slice(0, 5).map((x) => {
         const xa = txnAmount(x.amount);
         return `<div class="txn"><div class="who"><div class="m">${esc(fmtDate(x.date))} <span class="sub">${MID} ${esc(x.account_name || "")}</span></div></div><div class="${xa.cls}" style="font-size:13px">${xa.text}</div></div>`;
@@ -426,6 +458,10 @@ export default async function render(main) {
     state.total = (txnsRes && txnsRes.total) || state.transactions.length;
     state.sumOut = Number(txnsRes && txnsRes.sumOut) || 0;
     state.sumIn = Number(txnsRes && txnsRes.sumIn) || 0;
+    state.spending = Number(txnsRes && txnsRes.spending) || 0;
+    state.transfersOut = Number(txnsRes && txnsRes.transfersOut) || 0;
+    state.transfersIn = Number(txnsRes && txnsRes.transfersIn) || 0;
+    state.income = Number(txnsRes && txnsRes.income) || 0;
     accounts = Array.isArray(acctsRes) ? acctsRes : (acctsRes && acctsRes.accounts) || [];
     categories = Array.isArray(catsRes) ? catsRes : (catsRes && catsRes.categories) || [];
     bankLinks = linksRes || {};
@@ -476,6 +512,7 @@ export default async function render(main) {
 
   const listEl = main.querySelector("#txn-list");
   const acctFor = () => accounts.find((x) => String(x.id) === String(state.accountId));
+  syncHash();
   if (state.mode === "byacct" && acctFor()) fillMonthSummary(acctFor());
 
   const reload = async (append = false) => {
@@ -487,6 +524,7 @@ export default async function render(main) {
       await fetchPage(append);
       listEl.innerHTML = listHtml();
       wireList();
+      syncHash();
       if (!append && state.mode === "byacct" && acctFor()) fillMonthSummary(acctFor());
     } catch (err) {
       listEl.innerHTML = errorCard(err);

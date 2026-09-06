@@ -139,8 +139,26 @@ export function merchantLabel(t) {
 export function merchantDomain(t) {
   if (t.website) return String(t.website).replace(/^https?:\/\//, "").replace(/\/.*$/, "");
   const n = `${t.merchant_name || ""} ${t.name || ""}`.toLowerCase();
-  for (const [k, d] of MERCHANT_DOMAINS) if (n.includes(k)) return d;
+  for (const [k, d] of MERCHANT_DOMAINS) {
+    // Short keys ("irs", "bp", "cvs") only match as whole words, otherwise
+    // "Henni's Hairshop" would light up as the IRS.
+    if (k.trim().length <= 5) {
+      if (new RegExp(`(^|[^a-z])${k.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z]|$)`).test(n)) return d;
+    } else if (n.includes(k)) return d;
+  }
   return null;
+}
+
+/** "GENERAL_SERVICES_OTHER_GENERAL_SERVICES" -> "General services · Other general services" */
+export function plaidTagLabel(code) {
+  const c = String(code || "");
+  if (!c) return "";
+  const PRIMARIES = ["FOOD_AND_DRINK", "GENERAL_MERCHANDISE", "GENERAL_SERVICES", "RENT_AND_UTILITIES", "LOAN_PAYMENTS", "TRANSFER_IN", "TRANSFER_OUT",
+    "BANK_FEES", "HOME_IMPROVEMENT", "PERSONAL_CARE", "GOVERNMENT_AND_NON_PROFIT", "TRANSPORTATION", "ENTERTAINMENT", "MEDICAL", "TRAVEL", "INCOME"];
+  const primary = PRIMARIES.find((p) => c.startsWith(p + "_")) || c.split("_")[0];
+  const rest = c.slice(primary.length + 1);
+  const nice = (x) => x.toLowerCase().replace(/_/g, " ").replace(/^\w/, (ch) => ch.toUpperCase());
+  return rest ? `${nice(primary)} \u00B7 ${nice(rest)}` : nice(primary);
 }
 
 function hue(s) {
