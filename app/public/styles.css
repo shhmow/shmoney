@@ -472,3 +472,24 @@ figure svg { display: block; width: 100%; height: auto; }
   #txn-toolbar { position: sticky; top: 0; z-index: 5; background: var(--page); padding: 8px 0 10px; margin-bottom: 8px; }
   #txn-toolbar input[type="date"] { flex: 1; min-width: 130px; }
 }
+@media (max-width: 880px) {
+  .inst-acct input, .inst-acct select { font-size: 16px; padding: 8px 10px; }
+  .inst input { min-width: 0; }
+}
+@media (max-width: 880px) {
+  /* nothing may widen the layout viewport on a phone */
+  .grid.acct, .grid.acct > * { min-width: 0; }
+  .acct-card { overflow: hidden; }
+  .acct-card .util .sub { flex-wrap: wrap; }
+  .chips { flex-wrap: wrap; }
+  .pagehead .chips { max-width: 100%; }
+  .inst { min-width: 0; }
+  .inst > * { max-width: 100%; }
+  .inst .who { flex-basis: 100%; }
+  .table-wrap { max-width: 100%; }
+}
+@media (max-width: 880px) {
+  #cat-list .txn, #rule-list .txn { flex-wrap: wrap; }
+  #cat-list .txn .who, #rule-list .txn .who { flex-basis: calc(100% - 110px); }
+  .swatches { flex-basis: 100%; }
+}
