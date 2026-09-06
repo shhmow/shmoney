@@ -101,35 +101,63 @@ recurring.get("/", async (c) => {
   return c.json(await listRecurring(c.env));
 });
 
-// Possible subscriptions: merchants not tracked in recurring, charged the
-// exact same amount (to the cent) at least twice in the last 18 months.
+// Possible subscriptions: merchants not tracked in recurring, charged at
+// least twice in the last 18 months, either at amounts within ~20% of each
+// other (a price bump still qualifies) or with an exactly repeated amount
+// (a fixed plan next to one-off top-ups). At least 20 days between charges.
 recurring.get("/candidates", async (c) => {
   const since = daysAgoStr(548); // ~18 months
   const dismissed = await readMerchantList(c.env, DISMISSED_KEY);
-  const rows = await q<{ merchant: string; amount: number; count: number; first_date: string; last_date: string }>(
+  const rows = await q<{ merchant: string; amount: number; date: string }>(
     c.env,
-    `SELECT COALESCE(t.merchant_name, t.name) AS merchant,
-            t.amount AS amount,
-            COUNT(*) AS count,
-            MIN(t.date) AS first_date,
-            MAX(t.date) AS last_date
+    `SELECT COALESCE(t.merchant_name, t.name) AS merchant, t.amount, t.date
      FROM transactions t
      WHERE t.date >= ?1 AND t.amount >= 1 AND t.is_transfer = 0 AND t.excluded = 0
        AND COALESCE(t.merchant_name, t.name) NOT IN (SELECT merchant FROM recurring)
        AND COALESCE(t.merchant_name, t.name) NOT IN (SELECT value FROM json_each(?2))
-     GROUP BY COALESCE(t.merchant_name, t.name), CAST(ROUND(t.amount * 100) AS INTEGER)
-     HAVING COUNT(*) >= 2
-     ORDER BY MAX(t.date) DESC`,
+       AND LOWER(COALESCE(t.merchant_name, t.name)) IN (
+         SELECT LOWER(COALESCE(merchant_name, name)) FROM transactions
+         WHERE date >= ?1 AND amount >= 1 AND is_transfer = 0 AND excluded = 0
+         GROUP BY LOWER(COALESCE(merchant_name, name)) HAVING COUNT(*) >= 2)
+     ORDER BY merchant, t.date`,
     since, JSON.stringify(dismissed),
   );
-  return c.json(rows.map((r) => ({
-    merchant: r.merchant,
-    amount: r.amount,
-    count: r.count,
-    first_date: r.first_date,
-    last_date: r.last_date,
-    gap_days: daysBetween(r.first_date, r.last_date),
-  })));
+  const groups = new Map<string, { merchant: string; rows: { amount: number; date: string }[] }>();
+  for (const r of rows) {
+    const key = r.merchant.toLowerCase();
+    let g = groups.get(key);
+    if (!g) { g = { merchant: r.merchant, rows: [] }; groups.set(key, g); }
+    g.rows.push({ amount: r.amount, date: r.date });
+  }
+  const out: { merchant: string; amount: number; amount_min: number; amount_max: number; count: number; first_date: string; last_date: string; gap_days: number }[] = [];
+  const summarize = (merchant: string, xs: { amount: number; date: string }[]) => {
+    const amounts = xs.map((x) => x.amount);
+    const first = xs[0].date, last = xs[xs.length - 1].date;
+    const gap = Math.round(daysBetween(first, last) / Math.max(1, xs.length - 1));
+    if (daysBetween(first, last) < 20) return;
+    out.push({
+      merchant, count: xs.length,
+      amount: Math.round(amounts.reduce((a, b) => a + b, 0) / xs.length * 100) / 100,
+      amount_min: Math.min(...amounts), amount_max: Math.max(...amounts),
+      first_date: first, last_date: last, gap_days: gap,
+    });
+  };
+  for (const g of groups.values()) {
+    const amounts = g.rows.map((x) => x.amount);
+    const avg = amounts.reduce((a, b) => a + b, 0) / amounts.length;
+    if (Math.max(...amounts) - Math.min(...amounts) <= 0.2 * avg) { summarize(g.merchant, g.rows); continue; }
+    // Otherwise: the most repeated exact amount, if it repeats.
+    const byCents = new Map<number, { amount: number; date: string }[]>();
+    for (const x of g.rows) {
+      const k = Math.round(x.amount * 100);
+      if (!byCents.has(k)) byCents.set(k, []);
+      byCents.get(k)!.push(x);
+    }
+    const best = [...byCents.values()].sort((a, b) => b.length - a.length)[0];
+    if (best && best.length >= 2) summarize(g.merchant, best);
+  }
+  out.sort((a, b) => (a.last_date < b.last_date ? 1 : -1));
+  return c.json(out);
 });
 
 // Manually track a merchant as recurring with a user-declared cadence. The
