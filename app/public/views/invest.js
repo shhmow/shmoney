@@ -185,6 +185,7 @@ export default async function render(main) {
   // the same account scope as the series; lets the hero separate contributions
   // from market gain over any visible window.
   const flows = Array.isArray(data.contributions) ? data.contributions : [];
+  const targets = data.targetAllocation && typeof data.targetAllocation === "object" ? data.targetAllocation : null;
 
   // Allocation by security type (donut + drill-down). The API provides it;
   // fall back to grouping holdings client-side just in case.
@@ -348,7 +349,9 @@ export default async function render(main) {
     </div>
 
     <div class="card" style="margin-top:14px">
-      <div class="label" style="margin-bottom:12px">Allocation by type</div>
+      <div class="iv-cardhead" style="margin-bottom:12px"><div class="label">Allocation by type</div>
+        ${allocSegs.length ? `<button type="button" class="btn small" id="alloc-targets" aria-expanded="false">Targets</button>` : ""}</div>
+      <div id="alloc-target-form"></div>
       ${allocSegs.length ? `
       <div class="iv-alloc">
         <figure><svg id="alloc-donut" viewBox="0 0 150 150" style="width:150px" role="img" aria-label="Portfolio allocation by asset type. Segments are interactive."></svg></figure>
@@ -397,6 +400,8 @@ export default async function render(main) {
           <div class="sub" style="margin-top:7px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
             <span>${fmtMoneyWhole(roth.room)} room ${MID} ${rothDays.toLocaleString("en-US")} day${rothDays === 1 ? "" : "s"} to ${esc(fmtDateY(rothDeadline))}</span>
             <button type="button" class="btn small" id="roth-edit" aria-expanded="false" aria-controls="roth-form">Update</button></div>
+          ${Number(roth.autoContributed) > 0 && Math.abs(Number(roth.autoContributed) - Number(roth.contributed)) > 1
+            ? `<div class="muted-note" style="margin-top:4px">Transfers into the Roth this year total ${fmtMoneyWhole(roth.autoContributed)}. <button type="button" class="linky" id="roth-use-auto">Use that</button></div>` : ""}
           <div id="roth-form"></div>
         </div>` : ""}
         ${ira ? (() => {
@@ -682,7 +687,7 @@ export default async function render(main) {
       <button type="button" class="iv-legend-btn" data-cls="${esc(a.key)}" aria-pressed="${allocSel === a.key}">
         <i style="background:${a.color}"></i>${esc(a.label)}
         <span class="val">${fmtMoneyWhole(a.value)}</span>
-        <span class="pct">${fmtPct(a.pct)}</span>
+        <span class="pct">${fmtPct(a.pct)}${targets && targets[a.key] != null ? `<span class="sub"> / ${Math.round(targets[a.key])}% target</span>` : ""}</span>
       </button>`).join("");
     legend.querySelectorAll(".iv-legend-btn").forEach((b) => b.addEventListener("click", () => {
       allocSel = allocSel === b.dataset.cls ? null : b.dataset.cls;
@@ -692,6 +697,39 @@ export default async function render(main) {
   };
   if (allocSegs.length) { renderAlloc(); renderDrill(); }
 
+  // target allocation editor -> PUT /settings target_allocation
+  const targetsBtn = main.querySelector("#alloc-targets");
+  if (targetsBtn) targetsBtn.addEventListener("click", () => {
+    const slot = main.querySelector("#alloc-target-form");
+    if (slot.innerHTML) { slot.innerHTML = ""; targetsBtn.setAttribute("aria-expanded", "false"); return; }
+    targetsBtn.setAttribute("aria-expanded", "true");
+    const classes = Object.keys(CLASS_META).filter((k) => k !== "other" || allocSegs.some((s) => s.key === "other"));
+    slot.innerHTML = `<div class="popover" style="margin:0 0 12px;gap:10px">
+      ${classes.map((k) => `<label class="sub" style="display:flex;gap:6px;align-items:center">${CLASS_META[k].label}
+        <input type="number" min="0" max="100" step="1" style="width:70px" data-target="${k}" value="${targets && targets[k] != null ? Math.round(targets[k]) : ""}" aria-label="${CLASS_META[k].label} target percent">%</label>`).join("")}
+      <button type="button" class="btn primary small" id="alloc-save">Save</button>
+      <button type="button" class="btn small" id="alloc-clear">Clear</button>
+      <span class="muted-note" id="alloc-msg"></span>
+    </div>`;
+    const msg = slot.querySelector("#alloc-msg");
+    slot.querySelector("#alloc-save").addEventListener("click", async () => {
+      const out = {};
+      let sum = 0;
+      slot.querySelectorAll("[data-target]").forEach((i) => { if (i.value !== "") { out[i.dataset.target] = Number(i.value) || 0; sum += Number(i.value) || 0; } });
+      if (Math.abs(sum - 100) > 0.5) { msg.textContent = `Targets add up to ${Math.round(sum)}%, not 100%`; return; }
+      try { await api.put("/settings", { target_allocation: JSON.stringify(out) }); render(main); }
+      catch (err) { msg.textContent = err.message || "Save failed"; }
+    });
+    slot.querySelector("#alloc-clear").addEventListener("click", async () => {
+      try { await api.put("/settings", { target_allocation: "" }); render(main); }
+      catch (err) { msg.textContent = err.message || "Failed"; }
+    });
+  });
+
+  const rothAutoBtn = main.querySelector("#roth-use-auto");
+  if (rothAutoBtn) rothAutoBtn.addEventListener("click", async () => {
+    try { await api.put("/settings", { roth_contributed_ytd: Math.round(Number(roth.autoContributed)) }); render(main); } catch { /* shown on next load */ }
+  });
   // roth inline edit (contributed + annual limit) -> PUT /settings
   const rothEdit = main.querySelector("#roth-edit");
   if (rothEdit) rothEdit.addEventListener("click", () => {

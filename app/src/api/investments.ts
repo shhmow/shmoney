@@ -284,15 +284,43 @@ investments.get("/", async (c) => {
       status: "none",
     });
   }
-  checks.push({
-    id: "drift",
-    label: "Allocation drift",
-    detail: "No target allocation set.",
-    status: "none",
-  });
+  // Allocation drift against the user's targets (Settings, JSON by type class).
+  const settings = await getSettings(env);
+  let targetAllocation: Record<string, number> | null = null;
+  try {
+    const p = settings["target_allocation"] ? JSON.parse(settings["target_allocation"]) : null;
+    if (p && typeof p === "object") {
+      targetAllocation = {};
+      for (const [k, v] of Object.entries(p as Record<string, unknown>)) if (typeof v === "number" && v >= 0) targetAllocation[k] = v;
+      if (Object.keys(targetAllocation).length === 0) targetAllocation = null;
+    }
+  } catch { targetAllocation = null; }
+  if (targetAllocation) {
+    const globalAlloc = aggregate(hrows).allocationByType;
+    let worst: { label: string; diff: number } | null = null;
+    for (const a of globalAlloc) {
+      const target = targetAllocation[a.class] ?? 0;
+      const diff = a.pct - target;
+      if (!worst || Math.abs(diff) > Math.abs(worst.diff)) worst = { label: a.label, diff };
+    }
+    for (const [cls, target] of Object.entries(targetAllocation)) {
+      if (!globalAlloc.some((a) => a.class === cls) && target > 0) {
+        const label = cls.replace("_", " ");
+        if (!worst || target > Math.abs(worst.diff)) worst = { label, diff: -target };
+      }
+    }
+    const off = worst ? Math.abs(worst.diff) : 0;
+    checks.push({
+      id: "drift",
+      label: "Allocation drift",
+      detail: worst ? `${worst.label} is ${Math.round(off)} pts ${worst.diff > 0 ? "over" : "under"} target.` : "On target.",
+      status: off > 5 ? "check" : "pass",
+    });
+  } else {
+    checks.push({ id: "drift", label: "Allocation drift", detail: "No targets set. Use Targets in the allocation card.", status: "none" });
+  }
 
   // Retirement from settings (always global).
-  const settings = await getSettings(env);
   // 2026 IRS limit (under 50) is $7,500. A missing value, or the old $7,000
   // default that earlier builds seeded, both resolve to the current limit;
   // anything else is the user's own override.
@@ -304,9 +332,19 @@ investments.get("/", async (c) => {
   const deadline = `${taxYear + 1}-04-15`;
   const daysToDeadline = Math.max(0, Math.ceil((Date.parse(deadline + "T00:00:00Z") - Date.now()) / 86400_000));
   const hasRoth = accounts.some((a) => /roth/i.test(`${a.subtype ?? ""} ${a.name}`));
+  const rothAuto = await first<{ v: number | null }>(
+    env,
+    `SELECT SUM(-t.amount) AS v FROM investment_transactions t JOIN accounts a ON a.id = t.account_id
+     WHERE (LOWER(a.subtype) = 'roth' OR a.name LIKE '%ROTH%') AND t.date >= ?1
+       AND t.type IN ('cash', 'transfer') AND t.subtype IN ('contribution', 'deposit', 'transfer')
+       AND (t.name IS NULL OR t.name NOT LIKE '%DISTRIBUTION%')`,
+    `${taxYear}-01-01`,
+  );
   const roth = !hasRoth && rothContributed <= 0 ? null : {
     limit: round2(rothLimit),
     contributed: round2(rothContributed),
+    // What the linked Roth account(s) actually received this year, for the "use this" hint.
+    autoContributed: round2(Math.max(0, num(rothAuto?.v))),
     room: round2(Math.max(0, rothLimit - rothContributed)),
     taxYear,
     deadline,
@@ -420,6 +458,7 @@ investments.get("/", async (c) => {
     allocationByType,
     checks,
     contributions,
+    targetAllocation,
     retirement: { roth, inheritedIra },
   });
 });

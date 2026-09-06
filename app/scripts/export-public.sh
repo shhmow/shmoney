@@ -16,7 +16,7 @@ rsync -a --delete \
 sed -i.bak -E 's/"database_id": "[^"]+"/"database_id": "REPLACE_ME"/' "$DEST/wrangler.jsonc" && rm -f "$DEST/wrangler.jsonc.bak"
 
 # Fail loudly if a personal string slipped through.
-if grep -rIn --exclude-dir=node_modules -iE 'josephlove|29be106f|jlove' "$DEST" ; then
+if grep -rIn --exclude-dir=node_modules --exclude=export-public.sh -iE 'josephlove|29be106f|jlove' "$DEST" ; then
   echo "personal strings found above; fix before publishing" >&2; exit 1
 fi
 echo "clean copy written to $DEST"

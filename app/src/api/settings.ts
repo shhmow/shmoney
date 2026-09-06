@@ -18,6 +18,8 @@ const ALLOWED_KEYS = [
   "tax_profile",
   // JSON string: per-institution link overrides {key: {activity, dispute, phone}}
   "inst_links",
+  // JSON string: target allocation by type class, percentages {"stocks": 60, "etfs": 30, ...}
+  "target_allocation",
 ];
 
 export const settings = new Hono<{ Bindings: Env }>();
