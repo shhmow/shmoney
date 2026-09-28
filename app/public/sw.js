@@ -2,7 +2,7 @@
 // Network-first for all same-origin assets (deploys arrive immediately; cache
 // is the offline fallback). Cache-first only for fonts (immutable). NEVER
 // touches /api/*. Bump CACHE on strategy changes.
-const CACHE = "shmoney-v5";
+const CACHE = "shmoney-v6";
 const PRECACHE = [
   "/",
   "/styles.css",
@@ -10,6 +10,8 @@ const PRECACHE = [
   "/budget.css",
   "/app.js",
   "/icon.svg",
+  "/favicon-32.png",
+  "/apple-touch-icon.png",
   "/manifest.json",
   "/lib/api.js",
   "/lib/format.js",
