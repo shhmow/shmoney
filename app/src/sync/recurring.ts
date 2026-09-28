@@ -14,6 +14,13 @@
 //    price; an 18-month average is not what the next bill will be.
 //  * Income streams (paychecks) are detected the same way on inflows and stored
 //    with kind = 'income'.
+//  * A regular habit is not a bill. Charges Plaid files as food, shopping,
+//    rideshare, gas, or travel are never detected by pattern alone, however
+//    regular: only a known membership at those merchants counts (DashPass,
+//    Uber One, Prime). See isHabit() and KNOWN_SUBS.
+//  * Known subscription services, and descriptors that say "subscription" or
+//    "membership", count from their first charge. Anything else needs two
+//    identical charges a month (or a year) apart, or a longer pattern.
 import type { Env } from "../types";
 import { batch, first, q, run, stmt, type PreparedStatement } from "../lib/db";
 import { addDays, todayStr } from "../lib/format";
@@ -61,6 +68,7 @@ const ALIASES: ReadonlyArray<readonly [RegExp, string]> = [
   [/\bamazon\b.*\bprime\b|\bprime video\b/, "amazon prime"],
   [/\bgoogle\b.*\b(one|storage)\b/, "google one"],
   [/\bgithub\b/, "github"],
+  [/\bx corp\b|\btwitter\b/, "x premium"],
 ];
 
 const masked = (s: string | null | undefined): boolean => !s || /^[\s*#\-_.0-9]*$/.test(s);
@@ -85,6 +93,49 @@ export function merchantKey(merchantName: string | null, name: string): string {
   return normalizeName(base) || both || "unknown";
 }
 
+
+/* ------------------------------------------------------------------ known subscriptions */
+
+// Services that bill on a schedule. Matched against the normalized
+// "merchant_name name" of every charge in a group. `prices` marks a
+// membership sold by a merchant people also buy from (DoorDash orders vs
+// DashPass): only charges at those prices belong to the subscription.
+interface KnownSub { re: RegExp; prices?: readonly number[]; single?: boolean }
+const KNOWN_SUBS: readonly KnownSub[] = [
+  // Video, music, reading
+  { re: /\b(netflix|hulu|disney ?plus|disneyplus|hbo ?max|paramount|peacock|crunchyroll|nebula|fubo|sling tv|dazn|espn ?plus|youtube ?(premium|tv)|google youtube)\b/ },
+  { re: /\b(spotify|pandora|sirius ?xm|tidal|deezer|audible|kindle unlimited|apple music|patreon|substack|scribd|nytimes|new york times|wsj|wall street journal|washington post|the economist)\b/ },
+  // Software, AI, storage, dev tools
+  { re: /\b(anthropic|claude ai|openai|chatgpt|cursor|github|notion|figma|adobe|dropbox|icloud|google one|google storage|google workspace|microsoft 365|office 365|1password|lastpass|bitwarden|dashlane|nordvpn|expressvpn|surfshark|proton ?(mail|vpn)|grammarly|canva|midjourney|perplexity|goodnotes|webshare|vercel|cloudflare|digitalocean|heroku|netlify|x corp|twitter|linkedin premium|duolingo|headspace|strava|peloton|whoop|chess com|nintendo online|playstation plus|xbox game pass)\b/ },
+  // Dating, fitness
+  { re: /\b(tinder|bumble|hinge|match com|planet fitness|la fitness|equinox|crunch fitness|anytime fitness|orangetheory|classpass|ymca|lifetime fitness)\b/ },
+  // Memberships at merchants people also just buy from: the membership's own
+  // descriptor counts outright, otherwise only charges at its known prices.
+  { re: /\b(dashpass|uber one|prime membership|amazon prime|instacart\+|walmart\+|walmart plus)\b/ },
+  { re: /\bdoordash\b/, prices: [4.99, 8.99, 9.99, 96], single: false },
+  { re: /\buber\b/, prices: [9.99, 96], single: false },
+  { re: /\bamazon\b/, prices: [7.49, 8.99, 14.99, 139], single: false },
+  { re: /\binstacart\b/, prices: [9.99, 99], single: false },
+  { re: /\bwalmart\b/, prices: [12.95, 98], single: false },
+  { re: /\bcostco\b/, prices: [65, 130], single: false },
+  // Apple bills many things (apps, hardware); repeats only.
+  { re: /\bapple\b/, single: false },
+  // Descriptors that say what they are.
+  { re: /\b(subscription|subscr|membership|member fee|monthly plan|annual plan|premium plan)\b/ },
+];
+
+/** The known subscription a group of charge names belongs to, if any. */
+export function knownSub(names: Iterable<string>): KnownSub | null {
+  for (const n of names) {
+    const s = normalizeName(n);
+    for (const k of KNOWN_SUBS) if (k.re.test(s)) return k;
+  }
+  return null;
+}
+
+// Plaid categories for things people buy often but do not subscribe to.
+export const HABIT_PFC = /^(FOOD_AND_DRINK|GENERAL_MERCHANDISE|TRAVEL|TRANSPORTATION_(TAXIS|GAS)|ENTERTAINMENT_(CASINOS|SPORTING)|PERSONAL_CARE_(LAUNDRY|HAIR)|BANK_FEES)/;
+
 /** Display name for a charge: the cleaned merchant name, else a tidied descriptor. */
 export function displayName(merchantName: string | null, name: string): string {
   if (merchantName && !masked(merchantName)) return merchantName.trim();
@@ -96,7 +147,7 @@ export function displayName(merchantName: string | null, name: string): string {
 
 /* ------------------------------------------------------------------ groups */
 
-export interface Charge { date: string; amount: number; name: string }
+export interface Charge { date: string; amount: number; name: string; pfc: string | null }
 
 export interface ChargeGroup {
   key: string;
@@ -106,6 +157,7 @@ export interface ChargeGroup {
   categoryId: number | null; // most common category
   categoryName: string | null;
   categoryKind: string;      // expense | income | transfer
+  pfc: string | null;        // most common Plaid detailed category
 }
 
 interface ChargeRow {
@@ -116,6 +168,7 @@ interface ChargeRow {
   category_id: number | null;
   category_name: string | null;
   category_kind: string | null;
+  plaid_category: string | null;
 }
 
 /**
@@ -126,7 +179,7 @@ interface ChargeRow {
 export async function loadChargeGroups(env: Env, since: string, direction: "out" | "in"): Promise<ChargeGroup[]> {
   const rows = await q<ChargeRow>(
     env,
-    `SELECT t.merchant_name, t.name, t.date, t.amount, t.category_id,
+    `SELECT t.merchant_name, t.name, t.date, t.amount, t.category_id, t.plaid_category,
             c.name AS category_name, c.kind AS category_kind
      FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
      WHERE t.date >= ?1 AND t.excluded = 0 AND t.pending = 0
@@ -142,19 +195,20 @@ export async function loadChargeGroups(env: Env, since: string, direction: "out"
       if (raw && !rawToKey.has(raw)) rawToKey.set(raw, merchantKey(r.merchant_name, r.name));
     }
   }
-  const groups = new Map<string, ChargeGroup & { cats: Map<number, number>; catNames: Map<number, [string, string]> }>();
+  const groups = new Map<string, ChargeGroup & { cats: Map<number, number>; catNames: Map<number, [string, string]>; pfcs: Map<string, number> }>();
   for (const r of rows) {
     let key = merchantKey(r.merchant_name, r.name);
     if (!r.merchant_name || masked(r.merchant_name)) key = rawToKey.get(normalizeName(r.name)) ?? key;
     let g = groups.get(key);
     if (!g) {
-      g = { key, name: "", names: new Set(), charges: [], categoryId: null, categoryName: null, categoryKind: "expense", cats: new Map(), catNames: new Map() };
+      g = { key, name: "", names: new Set(), charges: [], categoryId: null, categoryName: null, categoryKind: "expense", pfc: null, cats: new Map(), catNames: new Map(), pfcs: new Map() };
       groups.set(key, g);
     }
     const dn = displayName(r.merchant_name, r.name);
     g.names.add(dn);
     g.name = dn; // rows are date-ascending, so the latest wins
-    g.charges.push({ date: r.date, amount: Math.abs(r.amount), name: dn });
+    g.charges.push({ date: r.date, amount: Math.abs(r.amount), name: dn, pfc: r.plaid_category });
+    if (r.plaid_category) g.pfcs.set(r.plaid_category, (g.pfcs.get(r.plaid_category) ?? 0) + 1);
     if (r.category_id !== null) {
       g.cats.set(r.category_id, (g.cats.get(r.category_id) ?? 0) + 1);
       g.catNames.set(r.category_id, [r.category_name ?? "", r.category_kind ?? "expense"]);
@@ -170,7 +224,9 @@ export async function loadChargeGroups(env: Env, since: string, direction: "out"
       g.categoryName = cn || null;
       g.categoryKind = ck || "expense";
     }
-    const { cats: _c, catNames: _n, ...rest } = g;
+    let pfcN = 0;
+    for (const [p, n] of g.pfcs) if (n > pfcN) { g.pfc = p; pfcN = n; }
+    const { cats: _c, catNames: _n, pfcs: _p, ...rest } = g;
     out.push(rest);
   }
   return out;
@@ -235,6 +291,22 @@ const STRICT_CATEGORIES = new Set(["Dining out", "Groceries", "Transport", "Shop
 // Categories whose bills legitimately vary month to month.
 const VARIABLE_CATEGORIES = new Set(["Bills & utilities", "Housing"]);
 
+/**
+ * Charges a group can bill from, or null when the group is a habit (regular
+ * restaurant, rideshare, shopping) rather than a subscription. A known
+ * membership at such a merchant keeps only charges at the membership prices.
+ */
+export function billable(g: ChargeGroup): Charge[] | null {
+  const known = knownSub(g.names);
+  if (known?.prices) {
+    const at = g.charges.filter((c) => known.prices!.some((p) => Math.abs(c.amount - p) < 0.011));
+    return at.length ? at : null;
+  }
+  if (known) return g.charges;
+  const habit = (g.pfc !== null && HABIT_PFC.test(g.pfc)) || (g.categoryName !== null && STRICT_CATEGORIES.has(g.categoryName));
+  return habit ? null : g.charges;
+}
+
 function identicalShare(xs: number[]): number {
   const counts = new Map<number, number>();
   for (const a of xs) { const c = Math.round(a * 100); counts.set(c, (counts.get(c) ?? 0) + 1); }
@@ -275,8 +347,64 @@ export interface Detection {
   core: Charge[];
 }
 
-/** Detect a billing cadence for one group of charges, or null. */
+/**
+ * Detect a billing cadence for one group of charges, or null. Bills go
+ * through billable() first; income is detected on the raw pattern.
+ */
 export function detectCadence(g: ChargeGroup, today: string, income = false): Detection | null {
+  if (income) return detectPattern(g, today, true);
+  const charges = billable(g);
+  if (!charges) return null;
+  const sub = { ...g, charges };
+  return detectPattern(sub, today, false) ?? detectPair(sub, today) ?? detectFirst(sub, today);
+}
+
+/**
+ * Two identical charges a month (or a year) apart: how a new subscription
+ * looks before it has history. The later one must be recent, so a stream that
+ * ended long ago is not revived.
+ */
+function detectPair(g: ChargeGroup, today: string): Detection | null {
+  const byCents = new Map<number, Charge[]>();
+  for (const c of g.charges) {
+    const k = Math.round(c.amount * 100);
+    byCents.set(k, [...(byCents.get(k) ?? []), c]);
+  }
+  let best: Detection | null = null;
+  for (const xs of byCents.values()) {
+    if (xs.length < 2) continue;
+    const [a, b] = xs.slice(-2);
+    const gap = daysBetween(a.date, b.date);
+    let d: Detection | null = null;
+    if (gap >= 26 && gap <= 35 && b.date >= addDays(today, -45)) {
+      d = { cadence: "monthly", amount: b.amount, lastDate: b.date, nextDate: nextMonthly(b.date), core: [a, b] };
+    } else if (gap >= 350 && gap <= 380 && b.date >= addDays(today, -380)) {
+      d = { cadence: "yearly", amount: b.amount, lastDate: b.date, nextDate: nextMonthly(b.date, 12), core: [a, b] };
+    }
+    if (d && (!best || d.lastDate > best.lastDate)) best = d;
+  }
+  return best;
+}
+
+/**
+ * A known subscription service seen once, recently: tracked from its first
+ * charge as monthly (yearly when the descriptor says so). If no second charge
+ * follows, it moves to "Stopped?" like any other stream.
+ */
+function detectFirst(g: ChargeGroup, today: string): Detection | null {
+  const known = knownSub(g.names);
+  if (!known || known.single === false || g.charges.length !== 1) return null;
+  const c = g.charges[0];
+  if (c.date < addDays(today, -40)) return null;
+  const yearly = [...g.names].some((n) => /\b(annual|yearly|year)\b/i.test(n));
+  return {
+    cadence: yearly ? "yearly" : "monthly", amount: c.amount, lastDate: c.date,
+    nextDate: nextMonthly(c.date, yearly ? 12 : 1), core: [c],
+  };
+}
+
+/** The pattern detectors: weekly, biweekly, monthly chains, then quarterly and yearly. */
+function detectPattern(g: ChargeGroup, today: string, income: boolean): Detection | null {
   const shortSince = addDays(today, -200);
   const recent = g.charges.filter((c) => c.date >= shortSince);
   const cat = income ? null : g.categoryName;
@@ -366,6 +494,11 @@ export async function detectRecurring(env: Env): Promise<void> {
     for (const n of others) if (existing.has(n) || manual.has(n)) superseded.add(n);
     if (manualHere) return; // user-declared values win
     if (dismissed.has(g.key)) return;
+    // A habit tracked by an older detector (a weekly restaurant) is dropped.
+    if (kind === "expense" && !billable(g)) {
+      for (const n of [g.name, ...others]) if (existing.has(n) && !manual.has(n)) superseded.add(n);
+      return;
+    }
     const d = detectCadence(g, today, kind === "income");
     if (!d) return;
     // Long cadences look far back: if the next charge is well overdue the
@@ -440,13 +573,15 @@ export interface Candidate {
   last_date: string;
   gap_days: number;
   category_name: string | null;
+  source?: "plaid";
 }
 
 /**
  * Possible subscriptions: merchants not tracked, charged at least twice in
  * the last 18 months at least 20 days apart, either at amounts within ~20% of
- * each other or with one exact amount repeated. Habit categories (dining,
- * groceries, transport, shopping, travel) need the exact repeat.
+ * each other or with one exact amount repeated, plus known subscription
+ * services seen once in the last 90 days. Habits (dining, groceries,
+ * rideshare, shopping, travel) are never suggested; see billable().
  */
 export async function recurringCandidates(env: Env, dismissed: string[]): Promise<Candidate[]> {
   const today = todayStr();
@@ -456,30 +591,36 @@ export async function recurringCandidates(env: Env, dismissed: string[]): Promis
   );
   const skip = new Set(dismissed.map((m) => merchantKey(m, m)));
   const out: Candidate[] = [];
-  const summarize = (g: ChargeGroup, xs: Charge[]) => {
+  const summarize = (g: ChargeGroup, xs: Charge[], minSpan = 20) => {
     const first = xs[0].date, lastD = xs[xs.length - 1].date;
     const span = daysBetween(first, lastD);
-    if (span < 20) return;
+    if (span < minSpan) return;
     const amounts = xs.map((x) => x.amount);
     out.push({
       merchant: g.name, count: xs.length,
       amount: Math.round(mean(amounts) * 100) / 100,
       amount_min: Math.min(...amounts), amount_max: Math.max(...amounts),
-      first_date: first, last_date: lastD, gap_days: Math.round(span / Math.max(1, xs.length - 1)),
+      first_date: first, last_date: lastD, gap_days: xs.length > 1 ? Math.round(span / (xs.length - 1)) : 0,
       category_name: g.categoryName,
     });
   };
   for (const g of groups) {
-    if (g.charges.length < 2 || tracked.has(g.key) || skip.has(g.key)) continue;
+    if (tracked.has(g.key) || skip.has(g.key)) continue;
     if (g.categoryKind !== "expense") continue;
+    const charges = billable(g);
+    if (!charges) continue;
     // A stream that stopped more than 90 days ago is not worth suggesting.
-    if (last(g.charges).date < addDays(today, -90)) continue;
-    const strict = g.categoryName !== null && STRICT_CATEGORIES.has(g.categoryName);
+    if (last(charges).date < addDays(today, -90)) continue;
+    if (charges.length === 1) {
+      const known = knownSub(g.names);
+      if (known && known.single !== false) summarize(g, charges, 0);
+      continue;
+    }
     const lenient = g.categoryName !== null && VARIABLE_CATEGORIES.has(g.categoryName);
-    const amounts = g.charges.map((c) => c.amount);
-    if (lenient || (!strict && Math.max(...amounts) - Math.min(...amounts) <= 0.2 * mean(amounts))) { summarize(g, g.charges); continue; }
+    const amounts = charges.map((c) => c.amount);
+    if (lenient || Math.max(...amounts) - Math.min(...amounts) <= 0.2 * mean(amounts)) { summarize(g, charges); continue; }
     const byCents = new Map<number, Charge[]>();
-    for (const c of g.charges) {
+    for (const c of charges) {
       const k = Math.round(c.amount * 100);
       if (!byCents.has(k)) byCents.set(k, []);
       byCents.get(k)!.push(c);

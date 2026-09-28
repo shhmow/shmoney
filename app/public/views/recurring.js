@@ -1,5 +1,6 @@
-// Recurring: bills and income streams detected from transactions, what is
-// due in the next 30 days, and a way to track anything by hand.
+// Recurring: subscriptions, bills, and income streams detected from
+// transactions, what is due in the next 30 days, and a way to track anything
+// by hand.
 import { api } from "../lib/api.js";
 import { esc, fmtMoney, fmtMoneyWhole, catChip, fmtDate, todayStr, emptyState, errorCard, debounce, MID } from "../lib/format.js";
 import { merchantTile } from "../lib/brand.js";
@@ -17,6 +18,7 @@ const monthly = (r) => amountOf(r) * PER_MONTH[cadenceOf(r)];
 const isIgnored = (r) => r.active === 0 || r.active === false;
 const isStale = (r) => !isIgnored(r) && (r.stale === 1 || r.stale === true);
 const isIncome = (r) => r.kind === "income";
+const isBill = (r) => r.section === "bill";
 
 function addDaysStr(date, n) {
   const [y, m, d] = String(date).split("-").map(Number);
@@ -43,7 +45,7 @@ function row(r, i, { stale = false, ignored = false } = {}) {
   const meta = [cadence];
   if (r.next_date && !stale && !ignored) {
     meta.push(r.next_date < today
-      ? `<span class="rc-due">expected ${esc(fmtDate(r.next_date))}, ${daysLate(r.next_date)} days late</span>`
+      ? `<span class="rc-due">expected ${esc(fmtDate(r.next_date))}, ${daysLate(r.next_date)} day${daysLate(r.next_date) === 1 ? "" : "s"} late</span>`
       : `next ${esc(fmtDate(r.next_date))}`);
   }
   const lastDate = r.last_txn_date || r.last_date;
@@ -52,6 +54,7 @@ function row(r, i, { stale = false, ignored = false } = {}) {
   }
   if (r.account_name) meta.push(esc(r.account_name));
   if (r.manual) meta.push("manual");
+  else if (Number(r.charge_count) === 1 && !stale && !ignored) meta.push("new, 1 charge so far");
   const sign = isIncome(r) ? "+" : "";
   const amtCell = `<div class="amt${isIncome(r) ? " in" : ""}">${sign}${fmtMoney(amt)}<span class="rc-suffix">${SUFFIX[cadence]}</span>${
     cadence !== "monthly" ? `<div class="rc-permo">${sign}${monthly(r) < 20 ? fmtMoney(monthly(r)) : fmtMoneyWhole(monthly(r))}/mo</div>` : ""}</div>`;
@@ -83,26 +86,30 @@ export default async function render(main) {
   categories = Array.isArray(categories) ? categories : [];
   candidates = Array.isArray(candidates) ? candidates : [];
 
-  const bills = [], income = [], stale = [], ignored = [];
+  const subs = [], bills = [], income = [], stale = [], ignored = [];
   items.forEach((r, i) => {
     const e = { r, i };
     if (isIgnored(r)) ignored.push(e);
     else if (isStale(r)) stale.push(e);
     else if (isIncome(r)) income.push(e);
-    else bills.push(e);
+    else if (isBill(r)) bills.push(e);
+    else subs.push(e);
   });
-  const monthlyTotal = bills.reduce((a, { r }) => a + monthly(r), 0);
+  const perMonth = (xs) => xs.reduce((a, { r }) => a + monthly(r), 0);
+  const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
   const today = todayStr();
   const horizon = addDaysStr(today, 30);
-  const upcoming = [...bills, ...income]
+  const upcoming = [...subs, ...bills, ...income]
     .filter(({ r }) => r.next_date && r.next_date >= today && r.next_date <= horizon)
     .sort((a, b) => String(a.r.next_date).localeCompare(String(b.r.next_date)));
   const dueTotal = upcoming.filter(({ r }) => !isIncome(r)).reduce((a, { r }) => a + amountOf(r), 0);
 
-  const subline = bills.length
-    ? `${bills.length} bill${bills.length === 1 ? "" : "s"} ${MID} about ${fmtMoneyWhole(monthlyTotal)}/mo${stale.length ? ` ${MID} ${stale.length} may have stopped` : ""}`
-    : "";
+  const parts = [];
+  if (subs.length) parts.push(`${plural(subs.length, "subscription")} ${fmtMoneyWhole(perMonth(subs))}/mo`);
+  if (bills.length) parts.push(`${plural(bills.length, "bill")} ${fmtMoneyWhole(perMonth(bills))}/mo`);
+  if (stale.length) parts.push(`${stale.length} may have stopped`);
+  const subline = parts.join(` ${MID} `);
 
   main.innerHTML = `<div class="page">
     <div class="pagehead">
@@ -124,7 +131,8 @@ export default async function render(main) {
 
     <div class="card" id="rec-list">
       ${items.length ? (
-        (bills.length ? bills.map(({ r, i }) => row(r, i)).join("") : `<p class="sub" style="margin:4px 0 8px">No active bills.</p>`) +
+        (subs.length ? `<div class="label" style="margin-bottom:4px">Subscriptions</div>${subs.map(({ r, i }) => row(r, i)).join("")}` : `<p class="sub" style="margin:4px 0 8px">No active subscriptions.</p>`) +
+        (bills.length ? `<div class="rc-group"><div class="label">Bills</div>${bills.map(({ r, i }) => row(r, i)).join("")}</div>` : "") +
         (income.length ? `<div class="rc-group"><div class="label">Income</div>${income.map(({ r, i }) => row(r, i)).join("")}</div>` : "") +
         (stale.length ? `<div class="rc-group"><div class="label">Stopped?</div>
           <p class="sub rc-note">No charge in over 45 days past the expected date. Not counted above.</p>
@@ -143,7 +151,7 @@ export default async function render(main) {
       ${candidates.map((cd, i) => `<div class="txn txn-plain" data-cand="${i}">
         <div class="who">
           <div class="m">${esc(cd.merchant)}</div>
-          <div class="meta"><span>${cd.count} &#215; ${fmtMoney(cd.amount)} ${MID} last ${esc(fmtDate(cd.last_date))}${cd.gap_days ? ` ${MID} every ~${cd.gap_days} days` : ""}</span></div>
+          <div class="meta"><span>${cd.count} &#215; ${fmtMoney(cd.amount)} ${MID} last ${esc(fmtDate(cd.last_date))}${cd.gap_days ? ` ${MID} every ~${cd.gap_days} days` : ""}${cd.source === "plaid" ? ` ${MID} from Plaid` : ""}</span></div>
           <div class="muted-note cand-msg"></div>
         </div>
         <div class="rc-ctl">
@@ -185,15 +193,15 @@ export default async function render(main) {
   }
 
   /* ---- candidates: track / dismiss ---- */
-  const track = async (merchant, cadence, btn, msgEl) => {
+  const track = async (merchant, cadence, btn, msgEl, amount) => {
     btn.disabled = true;
-    try { await api.post("/recurring", { merchant, cadence }); render(main); }
+    try { await api.post("/recurring", amount ? { merchant, cadence, avg_amount: amount } : { merchant, cadence }); render(main); }
     catch (err) { btn.disabled = false; if (msgEl) msgEl.textContent = err.message || "Failed"; }
   };
   main.querySelectorAll("[data-track]").forEach((btn) => btn.addEventListener("click", () => {
     const cd = candidates[Number(btn.dataset.track)];
     const rowEl = btn.closest("[data-cand]");
-    if (cd && rowEl) track(cd.merchant, rowEl.querySelector(".cand-cadence").value, btn, rowEl.querySelector(".cand-msg"));
+    if (cd && rowEl) track(cd.merchant, rowEl.querySelector(".cand-cadence").value, btn, rowEl.querySelector(".cand-msg"), cd.source === "plaid" ? cd.amount : null);
   }));
   main.querySelectorAll("[data-dismiss]").forEach((btn) => btn.addEventListener("click", async () => {
     const cd = candidates[Number(btn.dataset.dismiss)];
