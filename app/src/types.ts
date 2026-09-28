@@ -7,6 +7,10 @@ export interface Env {
   SESSION_SECRET: string;
   /** Comma-separated emails allowed through Cloudflare Access (defense in depth). */
   ALLOWED_EMAILS?: string;
+  /** Cloudflare Access team domain, e.g. "myteam.cloudflareaccess.com". */
+  ACCESS_TEAM_DOMAIN?: string;
+  /** Access application audience (AUD) tag, from Zero Trust -> Access -> Applications. */
+  ACCESS_AUD?: string;
   /** Public URL of this deployment (Plaid redirect/webhook). Defaults to the request origin. */
   APP_URL?: string;
 }

@@ -29,6 +29,7 @@ Then in Plaid's dashboard (Developers → API), add `https://<your-worker-url>/l
 | `SESSION_SECRET` | Any long random string. Signs the login cookie. |
 | `PLAID_CLIENT_ID`, `PLAID_SECRET` | From Plaid → Developers → Keys. Use the **Production** secret; the Trial plan uses production data. |
 | `ALLOWED_EMAILS` | Optional. Comma-separated emails allowed through Cloudflare Access if you put the worker behind it. |
+| `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD` | Optional, with Access only: your team domain (`<team>.cloudflareaccess.com`) and the application's AUD tag (Zero Trust → Access → Applications). With these set, an Access sign-in skips the app password. |
 | `APP_URL` | Optional. Public URL of the app if it is not the one requests arrive on (custom domain behind a proxy). |
 
 Set any of them later with `npx wrangler secret put NAME`.

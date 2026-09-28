@@ -1,12 +1,12 @@
 import { Hono } from "hono";
-import type { Env, AccessContext } from "./types";
+import type { Env } from "./types";
 import { api } from "./api";
 import { syncAll } from "./sync";
 import { rolloverBudgets } from "./sync/rollover";
 
 const app = new Hono<{ Bindings: Env }>();
 
-const BUILD_TAG = "2026-09-06-access-1";
+const BUILD_TAG = "2026-09-27-access-jwt";
 
 const SESSION_COOKIE = "shmoney_session";
 const SESSION_DAYS = 30;
@@ -65,15 +65,56 @@ app.post("/api/auth/logout", (c) => {
 // dashboard): Cloudflare has already authenticated the browser and attaches
 // the identity to the execution context. Trust it only for allow-listed
 // emails so a mis-scoped Access policy still cannot expose the data.
-async function accessEmail(c: { executionCtx: unknown; env: Env }): Promise<string | null> {
-  const access = (c.executionCtx as unknown as { access?: AccessContext }).access;
-  if (!access) return null;
-  let email: string | undefined;
-  try { email = (await access.getIdentity())?.email ?? undefined; } catch { return null; }
-  if (!email) return null;
-  const allowed = (c.env.ALLOWED_EMAILS ?? "").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
-  if (allowed.length > 0 && !allowed.includes(email.toLowerCase())) return null;
-  return email;
+// Cloudflare Access (when the Worker sits behind Access): every request that
+// passed Access carries a signed JWT in `cf-access-jwt-assertion`. Verify it
+// against the team's public keys and the application's audience tag, then
+// trust the email only if it is allow-listed, so a mis-scoped Access policy
+// still cannot expose the data. Needs ACCESS_TEAM_DOMAIN and ACCESS_AUD.
+let certCache: { at: number; keys: JsonWebKey[] } | null = null;
+
+async function accessKeys(team: string): Promise<JsonWebKey[]> {
+  if (certCache && Date.now() - certCache.at < 3600_000) return certCache.keys;
+  const res = await fetch(`https://${team}/cdn-cgi/access/certs`);
+  if (!res.ok) return certCache?.keys ?? [];
+  const body = (await res.json()) as { keys?: JsonWebKey[] };
+  certCache = { at: Date.now(), keys: body.keys ?? [] };
+  return certCache.keys;
+}
+
+function b64url(s: string): Uint8Array {
+  const b = atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4));
+  return Uint8Array.from(b, (ch) => ch.charCodeAt(0));
+}
+
+async function accessEmail(c: { req: { raw: Request }; env: Env }): Promise<string | null> {
+  const team = (c.env.ACCESS_TEAM_DOMAIN ?? "").trim().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  const aud = (c.env.ACCESS_AUD ?? "").trim();
+  const token = c.req.raw.headers.get("cf-access-jwt-assertion") ?? getCookie(c.req.raw, "CF_Authorization");
+  if (!team || !aud || !token) return null;
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const header = JSON.parse(new TextDecoder().decode(b64url(parts[0]))) as { kid?: string; alg?: string };
+    const claims = JSON.parse(new TextDecoder().decode(b64url(parts[1]))) as {
+      aud?: string | string[]; email?: string; exp?: number; iss?: string;
+    };
+    if (header.alg !== "RS256") return null;
+    const auds = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+    if (!auds.includes(aud)) return null;
+    if (claims.iss !== `https://${team}`) return null;
+    if (!claims.exp || claims.exp * 1000 < Date.now()) return null;
+    const jwk = (await accessKeys(team)).find((k) => (k as { kid?: string }).kid === header.kid);
+    if (!jwk) return null;
+    const key = await crypto.subtle.importKey("jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
+    const ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, b64url(parts[2]),
+      new TextEncoder().encode(`${parts[0]}.${parts[1]}`));
+    if (!ok || !claims.email) return null;
+    const allowed = (c.env.ALLOWED_EMAILS ?? "").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
+    if (allowed.length > 0 && !allowed.includes(claims.email.toLowerCase())) return null;
+    return claims.email;
+  } catch {
+    return null;
+  }
 }
 
 // Which sign-in is active, for the Settings page (Access: log out via Cloudflare).
